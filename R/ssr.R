@@ -25,45 +25,66 @@ ssr <- function(train_data, predict_data, control = ssr_control()) {
 	return(list(control = control))
 }
 
-ssr_predict <- function(ssr_fit, train_data, predict_data, prediction_lags, k) {
+ssr_predict <- function(ssr_fit, train_data, predict_data, prediction_steps, k = length(train_data)) {
 	# ssr_fit is a fit object from an ssr model
 	# train_data and predict_data are vectors
-	# prediction_lags is a vector of steps ahead to perform prediction.
+	# prediction_steps is a vector of steps ahead to perform prediction.
 	# k is the maximum number of non-zero observation weights.  
 	#
-	# returns a list of lists.  the list has one component for each lag in prediction_lags; component p has two sub-components:
+	# returns a list of lists.  the list has one component for each lag in prediction_steps; component p has two sub-components:
 	#  weights: a W_p by J matrix, where W_p is J = nrow(predict_data).  component p of the list is a W by matrix
 	#
 	# three steps to prediction:
 	#  1) compute distances between all points of the form train_data[i:(i + ssr_fit$lag)] and predict_data[j:(j + ssr_fit$lag)]
 	#  2) translate distances to weights
 	#  3) trace forward to get observations corresponding to each weight.
-
+	
 	# step 1 -- compute distances between lagged observation vectors from train_data and predict_data.
-	dists <- compute_pairwise_lagged_obs_distances(train_data, predict_data, ssr_fit$lag, ssr_fit$dist_fn, ssr_fit$dist_fn_args)
+	# Entry (i, j) is distance between train_data[i - lag, ... , i] and predict_data[j - lag, ... , j]
+	dists <- compute_pairwise_lagged_obs_distances(train_data, predict_data, ssr_fit$lag, ssr_fit$control$dist_fn, ssr_fit$control$dist_fn_args)
 
-	# step 2 -- compute weights
-	# TO DO: enforce the k argument -- at most k weights are non-zero.  note that the results of this restriction will be different for each prediction lag
+	# steps 2 and 3 -- form weights matrix for each prediction_step.
+	# Entry (i, j) is weight of ith training case for jth prediction case.
+	# Three things to think about:
+	#  1) for lags ssr_fit$lag and prediction_step, only nonzero weights at indices i s.t. 
+	#     (a) i > ssr_fit$lag -- because we lag the training data, the first few observations can't be used
+	#     (b) i <= length(train_data) - prediction_step -- because we look ahead to make predictions, the last few observations can't be used
+	#  2) enforce the k argument -- at most k non-zero weights
+	weights <- lapply(prediction_steps, function(prediction_step) { # prediction_step = prediction lag
+		temp <- sapply(seq_len(ncol(dists)), function(j) { # j = prediction case index in lagged observations
+			# step 2 -- compute weights
+			
+			# get inds such that we can look ahead the required number prediction_step of time points:
+			# ssr_fit$lag < i <= length(train_data) - prediction_step
+			inds <- seq(from = ssr_fit$lag + 1, to = length(train_data) - prediction_step)
+			
+			# enforce at most k non-zero weights -- choose the smallest distances <=> largest weights
+			inds <- inds[get_inds_smallest_k(dists[inds - ssr_fit$lag, j], min(k, length(inds)))]
+			
+			# weights default to 0
+			w_j <- rep(0, length(train_data))
 
-	# I'm following the formulas in Perretti et al. here, but I think there's cancellation -- we should work it out.
-	# w_ij = exp(-theta * d_ij / a_j), where a_j = (1/n) sum_i d_ij is the average distance between prediction case j and all training points.
-	# in terms of the dists matrix, the a_j are column means
-	a <- apply(dists, 2, mean)
-	weights <- exp(sweep(dists, 2, -1 * ssr_fit$theta * a, FUN = "/"))
+			# fill in selected values -- push weights forward prediction_step time units
+			# I'm following the formulas in Perretti et al. here, but I think there may be cancellation -- we should work it out.
+			# w_ij = exp(-theta * d_ij / a_j), where a_j = (1/n) sum_i d_ij is the average distance between prediction case j and all training points.
+			dists_j <- dists[inds - ssr_fit$lag, j]
+			w_j[inds + prediction_step] <- exp(-1 * ssr_fit$theta * dists_j / mean(dists_j))
+			
+			# re-normalize and return weights for prediction case j
+			return(w_j / sum(w_j))
+		})
 
-
-	# step 3 -- get look-ahead observations corresponding to each weight.  again, I'm returning much more than necessary.
-	predictions <- lapply(prediction_lags, function(l) {
-		# get inds such that we can look ahead the required number l of lags:
-		# we require that i + ssr_fit$lag + l <= length(train_data), or equivalently
-		# i <= length(train_data) - ssr_fit$lag - l
-		inds <- seq_len(length(train_data) - ssr_fit$lag - l)
-		return(list(weights = weights[inds, , drop = FALSE],
-			obs = train_data[inds + ssr_fit$lag + l]))
+		# return weights for all prediction cases prediction_step steps ahead
+		# padded by NA columns for prediction cases where there weren't enough preceeding cases to formed lagged obs. vectors
+		return(cbind(matrix(NA, nrow = length(train_data), ncol = ssr_fit$lag), temp))
 	})
-	names(predictions) <- paste0("lag_", prediction_lags)
+	names(weights) <- paste0("lag_", prediction_steps)
 
-	return(predictions)
+	return(list(weights = weights, centers = train_data, prediction_steps = prediction_steps))
+}
+
+get_inds_smallest_k <- function(v, k) {
+	return(order(v, decreasing = FALSE)[seq_len(k)])
 }
 
 get_lagged_obs_matrix <- function(orig_data, lag) {
