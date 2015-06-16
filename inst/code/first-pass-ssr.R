@@ -3,13 +3,13 @@
 library(lubridate)
 library(ggplot2)
 library(dplyr)
+library(ssr)
 
-sj <- read.csv('data/San_Juan_Training_Data.csv')
+sj <- San_Juan_train
 
 ## add lag columns
 sj <- sj %>% mutate(total_cases_lag3 = lag(total_cases, 3),
-                    total_cases_lag1 = lag(total_cases),
-                    week_start_date = ymd(week_start_date))
+                    total_cases_lag1 = lag(total_cases))
 
 ## simple time series plot
 ggplot(sj, aes(x=week_start_date, y=total_cases)) + geom_line()
@@ -39,3 +39,12 @@ ggplot(sj, aes(x=week_start_date)) +
     geom_abline(b=1, a=0, color="grey"))
 
 p1 + facet_wrap(~ season)
+
+
+## ssr predict season 2008/2009 from previous years
+ssr_predict(ssr_fit = list(),
+		train_data = sj$smooth_cases,
+		predict_data = sj$smooth_cases,
+		prediction_lags = 1,
+		k = 1)
+
