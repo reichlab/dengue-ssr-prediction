@@ -57,7 +57,7 @@ p1 + facet_wrap(~ season)
 
 
 
-# 1, 13, 26, 39, and 52 weeks ahead prediction
+# 1, 13, 26, 39, and 52 weeks ahead density predictions, for plots
 target_inds <- which(sj$season == "2008/2009")
 ssr_ests <- rbind.fill(lapply(c(1, 13, 26, 39, 52), function(prediction_steps) {
     last_obs_season_week_and_prediction_steps_combos <- lapply(target_inds,
@@ -76,7 +76,8 @@ ssr_ests <- rbind.fill(lapply(c(1, 13, 26, 39, 52), function(prediction_steps) {
                 theta = 10,
                 tr_lag = 1,
                 prediction_steps = params$prediction_steps,
-                data = sj)
+                data = sj,
+                prediction_types = "density")$density_preds
         }
     ))
 }))
@@ -88,18 +89,21 @@ ssr_ests$season_season_week <- paste(ssr_ests$season, ssr_ests$season_week,
 
 ssr_ests$model <- paste0("ssr_p_", ssr_ests$prediction_step)
 
-## get naive model estimates
+## get naive model estimates -- only handles holdout_seasons with length 1?
 get_season_week_kde_ests_one_week <- function(wk, holdout_seasons, data) {
     inds <- which(!(data$season %in% holdout_seasons) & data$season_week == wk)
     
     ## do weighted kde
-    temp <- density(data[inds, "smooth_log_cases"],
+    kde_log_scale <- density(data[inds, "log_total_cases"],
+        bw = "SJ")
+    kde_orig_scale <- density(data[inds, "total_cases"],
         bw = "SJ")
     
-    return(data.frame(log_total_cases = temp$x,
-            total_cases = exp(temp$x),
-            est_density = temp$y,
-            season = rep(holdout_seasons, each = length(temp$x)),
+    return(data.frame(log_total_cases = kde_log_scale$x,
+            total_cases = kde_orig_scale$x,
+            est_density_log_scale = kde_log_scale$y,
+            est_density_orig_scale = kde_orig_scale$y,
+            season = rep(holdout_seasons, each = length(kde_orig_scale$x)),
             season_week = wk
         ))
 }
@@ -110,21 +114,22 @@ season_week_kde_ests <- rbind.fill(
         data = sj)
 )
 
-
 season_week_kde_ests$model <- "naive"
 
 
 
+# combine estimates from ssr with various lags and naive model
 combined_ests <- rbind.fill(ssr_ests, season_week_kde_ests)
-combined_ests$est_density_log_scale <- combined_ests$est_density
-combined_ests$est_density <- combined_ests$est_density_log_scale / combined_ests$total_cases
 
+
+# get observed totals
 sj_inds_keep <- seq_len(nrow(sj))[sj$season_season_week %in%
     ssr_ests$season_season_week]
 obs_counts <- sj[sj_inds_keep,
     c("smooth_log_cases", "log_total_cases", "total_cases", "season_season_week", "season", "season_week")]
 obs_counts$exp_smooth_log_cases <- exp(obs_counts$smooth_log_cases)
 obs_counts <- melt(obs_counts, id = c("season", "season_week", "season_season_week"))
+
 
 ## plot estimates, compared with observed cases and smoothed cases
 ## log scale
@@ -137,8 +142,9 @@ p <- ggplot() +
 
 print(p)
 
+## original scale
 p <- ggplot() +
-    geom_line(aes(x = total_cases, y = est_density, colour = model), data = combined_ests) +
+    geom_line(aes(x = total_cases, y = est_density_orig_scale, colour = model), data = combined_ests) +
     geom_vline(aes(xintercept = value, linetype = variable), data = obs_counts[obs_counts$variable %in% c("exp_smooth_log_cases", "total_cases"), ], show_guide = TRUE) +
     coord_cartesian(xlim = c(0, 50)) +
     facet_wrap(~ season_week) +
@@ -146,3 +152,6 @@ p <- ggplot() +
     theme_bw()
 
 print(p)
+
+
+

@@ -133,8 +133,12 @@ ssr_predict <- function(ssr_fit,
 #' the number of cases in the weeks indexed by t + prediction_step, where
 #'   - t is specified by last_obs_season and last_obs_week
 #'   - prediction_step varies over the values in prediction_steps
-#' I THINK WE SHOULD PROBABLY USE LOGGED VALUES TO GET POINTS USED IN KDE, BUT
-#' USE ORIGINAL SCALE VALUES IN FORMING THE FINAL KDE
+#' Currently the function assumes that data have already been smoothed on the
+#' log scale and a data frame variable named smooth_log_cases is available.
+#' Log cases are used to do the SSR and get weights for each time point.
+#' KDE estimates are then computed both on the log scale using smooth_log_cases
+#' and also on the original data scale using exp(smooth_log_cases) as the
+#' centers.
 #' 
 #' @param last_obs_season is the season for the last observed week before we
 #'     want to make a prediction.  Has the form "2008/2009"
@@ -146,14 +150,19 @@ ssr_predict <- function(ssr_fit,
 #' @param prediction_steps is a vector giving the number of steps ahead
 #'     to do prediction from the week before first_predict_week
 #' @param data is the data set to use
+#' @param prediction_types is a character vector indicating the prediction types
+#'     to perform: may contain one or more of "pt" and "density"
 #' 
-#' @return results
+#' @return list of data frames with predictions.  one list component per entry
+#'     in prediction_types argument.  Density estimates are from KDE along a
+#'     grid of values for total_counts for each week that we predicted at.
 ssr_predict_dengue_stepsahead_one_week <- function(last_obs_season,
     last_obs_week,
     theta,
     tr_lag,
     prediction_steps,
-    data) {
+    data,
+    prediction_types = c("pt", "density")) {
     ## get indices for prediction data
     ## in order to predict at time t + prediction_step,
     ##  - data must start at time t - tr_lag so that we can get tr_lag + 1
@@ -220,45 +229,102 @@ ssr_predict_dengue_stepsahead_one_week <- function(last_obs_season,
                 }))
     )
     
-    ## a function to get kde predictions for one week
-    get_kde_predictions_one_week <- function(prediction_step_i) {
-        ## get week and season when we're predicting
-        wk <- (data$season_week[last_obs_ind] + prediction_steps[prediction_step_i]) %% 52
-        if(wk == 0) {
-            wk <- 52
-        }
-        seasons_advanced <- (data$season_week[last_obs_ind] + prediction_steps[prediction_step_i]
-                - wk) / 52
-        start_season_last_obs <- as.integer(substr(
-                as.character(data$season[last_obs_ind]),
-                start = 1,
-                stop = 4))
-        season <- start_season_last_obs + seasons_advanced
-        season <- paste0(season, "/", season + 1)
+    ## a function to get point predictions for one week
+    get_pt_predictions_one_week <- function(prediction_step_i) {
+        # get weighted mean
+        pt_est_log_scale <- weighted.mean(ssr_pred_combined$centers,
+            ssr_pred_combined$weights[[prediction_step_i]][, 2])
+        pt_est_orig_scale <- weighted.mean(exp(ssr_pred_combined$centers),
+            ssr_pred_combined$weights[[prediction_step_i]][, 2])
         
-        ## do weighted kde
-        temp <- density(ssr_pred_combined$centers,
-            weights = ssr_pred_combined$weights[[prediction_step_i]][, 2],
-            bw = "SJ")
+        # time at which prediction was performed
+        season_and_week <- get_prediction_season_week(last_obs_ind,
+            prediction_steps[prediction_step_i], data)
         
-        return(data.frame(log_total_cases = temp$x,
-                total_cases = exp(temp$x),
-                est_density = temp$y,
-                season = season,
-                season_week = wk,
+        return(data.frame(est_total_cases_log_scale = pt_est_log_scale,
+                est_total_cases_orig_scale = pt_est_orig_scale,
+                est_total_cases_orig_scale_from_log_scale = exp(pt_est_log_scale),
+                season = season_and_week$season,
+                season_week = season_and_week$week,
                 prediction_step = prediction_steps[prediction_step_i]
             ))
     }
     
-    ## get predictions for all specified prediction_steps and combine in a df
-    ssr_ests <- rbind.fill(
-        lapply(seq_along(prediction_steps), get_kde_predictions_one_week)
-    )
-    ssr_ests$prediction_step <- factor(ssr_ests$prediction_step)
+    ## a function to get kde predictions for one week
+    get_kde_predictions_one_week <- function(prediction_step_i) {
+        ## do weighted kde
+        kde_est_log_scale <- density(ssr_pred_combined$centers,
+            weights = ssr_pred_combined$weights[[prediction_step_i]][, 2],
+            bw = "SJ")
+        kde_est_orig_scale <- density(exp(ssr_pred_combined$centers),
+            weights = ssr_pred_combined$weights[[prediction_step_i]][, 2],
+            bw = "SJ")
+        
+        # time at which prediction was performed
+        season_and_week <- get_prediction_season_week(last_obs_ind,
+            prediction_steps[prediction_step_i], data)
+        
+        return(data.frame(log_total_cases = kde_est_log_scale$x,
+                total_cases = kde_est_orig_scale$x,
+                est_density_log_scale = kde_est_log_scale$y,
+                est_density_orig_scale = kde_est_orig_scale$y,
+                est_density_orig_scale_from_log_scale = kde_est_log_scale$y / kde_est_orig_scale$x,
+                season = season_and_week$season,
+                season_week = season_and_week$week,
+                prediction_step = prediction_steps[prediction_step_i]
+            ))
+    }
     
-    return(ssr_ests)
+    ## get predictions for all specified prediction_steps
+    result <- list()
+    
+    if("pt" %in% prediction_types) {
+        result$pt_preds <- rbind.fill(
+            lapply(seq_along(prediction_steps), get_pt_predictions_one_week)
+        )
+        result$pt_preds$prediction_step <-
+            factor(result$pt_preds$prediction_step)
+    }
+    
+    if("density" %in% prediction_types) {
+        result$density_preds <- rbind.fill(
+            lapply(seq_along(prediction_steps), get_kde_predictions_one_week)
+        )
+        result$density_preds$prediction_step <-
+            factor(result$density_preds$prediction_step)
+    }
+    
+    return(result)
 }
 
+
+#' Get week and season when we're predicting based on the index of the last obs
+#' and the number of steps forward we're predicting
+#' 
+#' @param last_obs_ind index in the data data frame of the last observation
+#'     before we start predicting
+#' @param prediction_step the number of steps forward we're predicting
+#' @param data the data frame, with columns named season_week and season
+#' 
+#' @return a list with two components indicating the time of prediction:
+#'     1) week is an integer from 1 to 52 and
+#'     2) season is a string of the form "2008/2009"
+get_prediction_season_week <- function(last_obs_ind, prediction_step, data) {
+    wk <- (data$season_week[last_obs_ind] + prediction_step) %% 52
+    if(wk == 0) {
+        wk <- 52
+    }
+    seasons_advanced <- (data$season_week[last_obs_ind] + prediction_step
+            - wk) / 52
+    start_season_last_obs <- as.integer(substr(
+            as.character(data$season[last_obs_ind]),
+            start = 1,
+            stop = 4))
+    season <- start_season_last_obs + seasons_advanced
+    season <- paste0(season, "/", season + 1)
+    
+    return(list(week = wk, season = season))
+}
 
 #' Get the indices of the smallest k elements of v.  This code currently assumes
 #' that k >= length(v)
