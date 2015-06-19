@@ -97,8 +97,8 @@ ssr_predict <- function(ssr_fit,
             inds <- inds[get_inds_smallest_k(dists[inds - ssr_fit$lag, j],
                     min(k, length(inds)))]
             
-            ## weights default to 0
-            w_j <- rep(0, length(train_data))
+            ## weights default to 0, log = -Inf
+            log_w_j <- rep(-Inf, length(train_data))
 
             ## fill in selected values -- push weights forward prediction_step
             ## time units.  I'm following the formulas in Perretti et al. here,
@@ -107,11 +107,12 @@ ssr_predict <- function(ssr_fit,
             ## a_j = (1/n) sum_i d_ij is the average distance between
             ## prediction case j and all training points.
             dists_j <- dists[inds - ssr_fit$lag, j]
-            w_j[inds + prediction_step] <- exp(-1 * ssr_fit$theta * dists_j /
+            log_w_j[inds + prediction_step] <- (-1 * ssr_fit$theta * dists_j /
                             mean(dists_j))
             
             ## re-normalize and return weights for prediction case j
-            return(w_j / sum(w_j))
+            norm_const <- logspace_sum_matrix_rows(matrix(log_w_j, nrow = 1))
+            return(exp(log_w_j - norm_const))
         })
 
         ## return weights for all prediction cases prediction_step steps ahead
@@ -126,6 +127,138 @@ ssr_predict <- function(ssr_fit,
         centers=train_data,
         prediction_steps=prediction_steps))
 }
+
+#' This is a wrapper for the ssr_predict function to perform prediction from
+#' the dengue data sets for the competition.  Computes KDE predictions for
+#' the number of cases in the weeks indexed by t + prediction_step, where
+#'   - t is specified by last_obs_season and last_obs_week
+#'   - prediction_step varies over the values in prediction_steps
+#' I THINK WE SHOULD PROBABLY USE LOGGED VALUES TO GET POINTS USED IN KDE, BUT
+#' USE ORIGINAL SCALE VALUES IN FORMING THE FINAL KDE
+#' 
+#' @param last_obs_season is the season for the last observed week before we
+#'     want to make a prediction.  Has the form "2008/2009"
+#' @param last_obs_week is the last observed week of the season specified by
+#'     last_obs_season before we want to make a prediction.  An integer
+#'     between 1 and 52.
+#' @param tr_lag is the number of lags to use in forming the state space
+#'     representation via lagged observations
+#' @param prediction_steps is a vector giving the number of steps ahead
+#'     to do prediction from the week before first_predict_week
+#' @param data is the data set to use
+#' 
+#' @return results
+ssr_predict_dengue_stepsahead_one_week <- function(last_obs_season,
+    last_obs_week,
+    theta,
+    tr_lag,
+    prediction_steps,
+    data) {
+    ## get indices for prediction data
+    ## in order to predict at time t + prediction_step,
+    ##  - data must start at time t - tr_lag so that we can get tr_lag + 1
+    ##    values in forming the lagged observation vector
+    ##  - we need the number of data points equal to tr_lag + 1
+    ## first_predict_ind is the first index in the data data frame
+    ## that needs to be included in the prediction data
+    last_obs_ind <- which(data$season == last_obs_season &
+            data$season_week == last_obs_week)
+    first_predict_data_ind <- last_obs_ind - tr_lag
+    predict_data_inds <- seq(from=first_predict_data_ind, length=tr_lag + 1)
+    
+    ## for training inds, eliminate anything in the given season(s) where
+    ## we are performing prediction.
+    predict_seasons <- unique(data$season[last_obs_ind + prediction_steps])
+    train_data_inds <- seq_len(nrow(data))[!(data$season %in% predict_seasons)]
+    
+    ## train_inds may include non-adjacent time intervals,
+    ## for example if we are predicting for a season in the middle of the data
+    ## perform prediction separately for these non-adjacent intervals, since
+    ## ssr_predict currently assumes the provided train_data are all temporally
+    ## adjacent in forming lagged observation vectors.
+    
+    ## get points in the train_data_inds vector with non-adjacent values
+    split_pts <- which((train_data_inds[- length(train_data_inds)] + 1) !=
+            train_data_inds[-1])
+    split_pts <- c(0, split_pts, length(train_data_inds))
+    
+    ## form list with one component for each group of adjacent train data inds
+    train_data_inds_by_segment <- lapply(seq_len(length(split_pts) - 1),
+        function(i) {
+            return(train_data_inds[seq(from = split_pts[i] + 1,
+                        to = split_pts[i + 1])])
+        }
+    )
+    
+    ## do prediction for each segment of contiguous training inds
+    ssr_pred_by_segment <- lapply(train_data_inds_by_segment,
+        function(restricted_train_data_inds) {
+            return(ssr_predict(
+                    ssr_fit = list(control = ssr_control(),
+                        theta = theta,
+                        lag = tr_lag),
+                    train_data = data$smooth_log_cases[restricted_train_data_inds],
+                    predict_data = data$smooth_log_cases[predict_data_inds],
+                    prediction_steps = prediction_steps))
+        }
+    )
+    
+    ## combine prediction results from different segments of training inds
+    ssr_pred_combined <- list(
+        ## weights are list by prediction step of combined weights matrices
+        weights = lapply(seq_along(prediction_steps),
+            function(psi) {
+                rbind.fill.matrix(lapply(ssr_pred_by_segment,
+                        function(li) {
+                            li$weights[[psi]]
+                        }))
+            }),
+        ## centers are vector of combined center vectors
+        centers = unlist(lapply(ssr_pred_by_segment,
+                function(li) {
+                    li$centers
+                }))
+    )
+    
+    ## a function to get kde predictions for one week
+    get_kde_predictions_one_week <- function(prediction_step_i) {
+        ## get week and season when we're predicting
+        wk <- (data$season_week[last_obs_ind] + prediction_steps[prediction_step_i]) %% 52
+        if(wk == 0) {
+            wk <- 52
+        }
+        seasons_advanced <- (data$season_week[last_obs_ind] + prediction_steps[prediction_step_i]
+                - wk) / 52
+        start_season_last_obs <- as.integer(substr(
+                as.character(data$season[last_obs_ind]),
+                start = 1,
+                stop = 4))
+        season <- start_season_last_obs + seasons_advanced
+        season <- paste0(season, "/", season + 1)
+        
+        ## do weighted kde
+        temp <- density(ssr_pred_combined$centers,
+            weights = ssr_pred_combined$weights[[prediction_step_i]][, 2],
+            bw = "SJ")
+        
+        return(data.frame(log_total_cases = temp$x,
+                total_cases = exp(temp$x),
+                est_density = temp$y,
+                season = season,
+                season_week = wk,
+                prediction_step = prediction_steps[prediction_step_i]
+            ))
+    }
+    
+    ## get predictions for all specified prediction_steps and combine in a df
+    ssr_ests <- rbind.fill(
+        lapply(seq_along(prediction_steps), get_kde_predictions_one_week)
+    )
+    ssr_ests$prediction_step <- factor(ssr_ests$prediction_step)
+    
+    return(ssr_ests)
+}
+
 
 #' Get the indices of the smallest k elements of v.  This code currently assumes
 #' that k >= length(v)
@@ -152,10 +285,16 @@ get_lagged_obs_matrix <- function(orig_data, lag) {
         stop("invalid lag")
     }
 
-    return(sapply(seq(from=0, to=lag),
-        function(l) {
-            orig_data[seq(from=1 + l, to=n - lag + l)]
-        }))
+    ## there's probably a much cleaner way to do this
+    if(lag == n - 1) {
+        dim(orig_data) <- c(1, n)
+        return(orig_data)
+    } else {
+        return(sapply(seq(from=0, to=lag),
+            function(l) {
+                orig_data[seq(from=1 + l, to=n - lag + l)]
+            }))
+    }
 }
 
 #' Compute pairwise distances between the lagged observation vectors 

@@ -1,1 +1,2 @@
 exportPattern("^[^\\.]")
+useDynLib(ssr, .registration = TRUE)

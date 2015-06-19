@@ -2,7 +2,9 @@
 
 library(lubridate)
 library(ggplot2)
+library(plyr)
 library(dplyr)
+library(reshape)
 library(ssr)
 
 sj <- San_Juan_train
@@ -11,6 +13,15 @@ sj <- San_Juan_train
 sj <- sj %>% mutate(total_cases_lag3 = lag(total_cases, 3),
                     total_cases_lag1 = lag(total_cases))
 
+## add log column
+sj$log_total_cases <- log(sj$total_cases + 1)
+
+## add smooth log column
+sm <- loess(log_total_cases ~ as.numeric(week_start_date), data=sj, span=1/80)
+sj$smooth_log_cases <- sm$fitted
+
+                
+        
 ## simple time series plot
 ggplot(sj, aes(x=week_start_date, y=total_cases)) + geom_line()
 ggplot(sj, aes(x=week_start_date)) + geom_linerange(aes(ymin=0, ymax=total_cases))
@@ -41,10 +52,97 @@ ggplot(sj, aes(x=week_start_date)) +
 p1 + facet_wrap(~ season)
 
 
-## ssr predict season 2008/2009 from previous years
-ssr_predict(ssr_fit = list(),
-		train_data = sj$smooth_cases,
-		predict_data = sj$smooth_cases,
-		prediction_lags = 1,
-		k = 1)
 
+
+
+
+
+# 1, 13, 26, 39, and 52 weeks ahead prediction
+target_inds <- which(sj$season == "2008/2009")
+ssr_ests <- rbind.fill(lapply(c(1, 13, 26, 39, 52), function(prediction_steps) {
+    last_obs_season_week_and_prediction_steps_combos <- lapply(target_inds,
+        function(ti) {
+            list(last_obs_season = as.character(sj$season[ti - prediction_steps]),
+                last_obs_week = sj$season_week[ti - prediction_steps],
+                prediction_steps = prediction_steps)
+        }
+    )
+        
+    rbind.fill(lapply(last_obs_season_week_and_prediction_steps_combos,
+        function(params) {
+            ssr_predict_dengue_stepsahead_one_week(
+                last_obs_season = params$last_obs_season,
+                last_obs_week = params$last_obs_week,
+                theta = 10,
+                tr_lag = 1,
+                prediction_steps = params$prediction_steps,
+                data = sj)
+        }
+    ))
+}))
+
+
+sj$season_season_week <- paste(as.character(sj$season), sj$season_week, sep = "-")
+ssr_ests$season_season_week <- paste(ssr_ests$season, ssr_ests$season_week,
+    sep = "-")
+
+ssr_ests$model <- paste0("ssr_p_", ssr_ests$prediction_step)
+
+## get naive model estimates
+get_season_week_kde_ests_one_week <- function(wk, holdout_seasons, data) {
+    inds <- which(!(data$season %in% holdout_seasons) & data$season_week == wk)
+    
+    ## do weighted kde
+    temp <- density(data[inds, "smooth_log_cases"],
+        bw = "SJ")
+    
+    return(data.frame(log_total_cases = temp$x,
+            total_cases = exp(temp$x),
+            est_density = temp$y,
+            season = rep(holdout_seasons, each = length(temp$x)),
+            season_week = wk
+        ))
+}
+
+season_week_kde_ests <- rbind.fill(
+    lapply(seq_len(52), get_season_week_kde_ests_one_week,
+        holdout_seasons = "2008/2009",
+        data = sj)
+)
+
+
+season_week_kde_ests$model <- "naive"
+
+
+
+combined_ests <- rbind.fill(ssr_ests, season_week_kde_ests)
+combined_ests$est_density_log_scale <- combined_ests$est_density
+combined_ests$est_density <- combined_ests$est_density_log_scale / combined_ests$total_cases
+
+sj_inds_keep <- seq_len(nrow(sj))[sj$season_season_week %in%
+    ssr_ests$season_season_week]
+obs_counts <- sj[sj_inds_keep,
+    c("smooth_log_cases", "log_total_cases", "total_cases", "season_season_week", "season", "season_week")]
+obs_counts$exp_smooth_log_cases <- exp(obs_counts$smooth_log_cases)
+obs_counts <- melt(obs_counts, id = c("season", "season_week", "season_season_week"))
+
+## plot estimates, compared with observed cases and smoothed cases
+## log scale
+p <- ggplot() +
+    geom_line(aes(x = log_total_cases, y = est_density_log_scale, colour = model), data = combined_ests) +
+    geom_vline(aes(xintercept = value, linetype = variable), data = obs_counts[obs_counts$variable %in% c("smooth_log_cases", "log_total_cases"), ], show_guide = TRUE) +
+    facet_wrap(~ season_week) +
+    ggtitle("Predictions by week for 2008/2009 season (log scale)") +
+    theme_bw()
+
+print(p)
+
+p <- ggplot() +
+    geom_line(aes(x = total_cases, y = est_density, colour = model), data = combined_ests) +
+    geom_vline(aes(xintercept = value, linetype = variable), data = obs_counts[obs_counts$variable %in% c("exp_smooth_log_cases", "total_cases"), ], show_guide = TRUE) +
+    coord_cartesian(xlim = c(0, 50)) +
+    facet_wrap(~ season_week) +
+    ggtitle("Predictions by week for 2008/2009 season") +
+    theme_bw()
+
+print(p)
