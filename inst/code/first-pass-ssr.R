@@ -155,3 +155,90 @@ print(p)
 
 
 
+
+## compute point estimates and get MASE for each lag and naive model
+target_inds <- which(sj$season == "2008/2009")
+prediction_steps_vec <- 1:52
+#prediction_steps_vec <- c(1, 13, 26, 39, 52)
+ssr_pt_ests <- rbind.fill(lapply(prediction_steps_vec, function(prediction_steps) {
+    last_obs_season_week_and_prediction_steps_combos <- lapply(target_inds,
+        function(ti) {
+            list(last_obs_season = as.character(sj$season[ti - prediction_steps]),
+                last_obs_week = sj$season_week[ti - prediction_steps],
+                prediction_steps = prediction_steps)
+         }
+    )
+
+    rbind.fill(lapply(last_obs_season_week_and_prediction_steps_combos,
+        function(params) {
+            ssr_predict_dengue_stepsahead_one_week(
+                last_obs_season = params$last_obs_season,
+                last_obs_week = params$last_obs_week,
+                theta = 10,
+                tr_lag = 1,
+                prediction_steps = params$prediction_steps,
+                data = sj,
+                prediction_types = "pt")$pt_preds
+        }
+    ))
+}))
+
+
+sj$season_season_week <- paste(as.character(sj$season), sj$season_week, sep = "-")
+ssr_pt_ests$season_season_week <- paste(ssr_pt_ests$season, ssr_pt_ests$season_week,
+    sep = "-")
+
+ssr_pt_ests$model <- paste0("ssr_p_", ssr_pt_ests$prediction_step)
+
+## get naive model point estimates -- only handles holdout_seasons with length 1?
+## turn this and naive density estimates function above into more real functions
+get_season_week_pt_ests_one_week <- function(wk, holdout_seasons, data) {
+    inds <- which(!(data$season %in% holdout_seasons) & data$season_week == wk)
+    
+    ## do (unweighted) mean
+    pt_est_log_scale <- mean(data[inds, "log_total_cases"])
+    pt_est_orig_scale <- mean(data[inds, "total_cases"])
+    
+    return(data.frame(est_total_cases_log_scale = pt_est_log_scale,
+            est_total_cases_orig_scale = pt_est_orig_scale,
+            est_total_cases_orig_scale_from_log_scale = exp(pt_est_log_scale),
+            season = holdout_seasons,
+            season_week = wk
+        ))
+}
+
+season_week_pt_ests <- rbind.fill(
+    lapply(seq_len(52), get_season_week_pt_ests_one_week,
+        holdout_seasons = "2008/2009",
+        data = sj)
+)
+
+season_week_pt_ests$model <- "naive"
+
+
+
+# combine estimates from ssr with various lags and naive model
+combined_pt_ests <- rbind.fill(ssr_pt_ests, season_week_pt_ests)
+
+
+# get mase for all models and plot
+mase_by_model <- tapply(combined_pt_ests$est_total_cases_orig_scale,
+    combined_pt_ests$model,
+    function(preds) {
+        mase(obs_counts$value[obs_counts$variable == "total_cases"], preds)
+    })
+
+mase_by_pred_step <- data.frame(
+    pred_step = as.integer(sapply(strsplit(names(mase_by_model[2:53]), "_"), function(lc) lc[length(lc)])),
+    mase = mase_by_model[2:53]
+)
+
+ggplot() +
+    geom_point(aes(x = pred_step, y = mase), data = mase_by_pred_step) +
+    geom_line(aes(x = pred_step, y = mase), data = mase_by_pred_step) +
+    geom_hline(yintercept = mase_by_model[names(mase_by_model) == "naive"]) +
+    coord_cartesian(ylim = c(0, 5.1)) +
+    ggtitle("MASE for SSR at prediction steps = 1, ..., 52\ncompared with naive weekly model\n in 2008/2009 season") +
+    theme_bw()
+
+
