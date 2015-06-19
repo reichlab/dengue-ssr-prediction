@@ -24,18 +24,18 @@ ssr_control <- function(lag=1,
 #' This is not yet implemented since we haven't exactly settled on
 #' what the parameters are or how we're going to estimate them.
 #' 
-#' @param train_data
-#' @param predict_data
-#' @param control
+#' @param train_data a vector of consecutive observations
+#' @param control a list of parameters controlling how the fit is done.
+#'     See the documentation for ssr_control.
 #' 
 #' @return an object representing an estimated ssr model
-ssr <- function(train_data,
-        predict_data,
+ssr <- function(train_data
         control=ssr_control()) {
-
     ## do some estimation process in here and return the results?
-
-    return(list(control=control))
+    lag_hat <- 1
+    theta_hat <- 1
+    
+    return(list(control=control), lag = lag_hat, theta = theta_hat)
 }
 
 #' Make predictions from an estimated ssr model.
@@ -187,6 +187,10 @@ ssr_predict_dengue_stepsahead_one_week <- function(last_obs_season,
     ## adjacent in forming lagged observation vectors.
     
     ## get points in the train_data_inds vector with non-adjacent values
+    ## THIS SHOULD BE UPDATED TO CHECK season AND season_week VARIABLES, NOT
+    ## TRAIN_DATA_INDS.  If there are multiple non-adjacent time points that have
+    ## been dropped (e.g., you're doing 2 levels of cross validation),
+    ## the current code fails.
     split_pts <- which((train_data_inds[- length(train_data_inds)] + 1) !=
             train_data_inds[-1])
     split_pts <- c(0, split_pts, length(train_data_inds))
