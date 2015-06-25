@@ -1,4 +1,4 @@
-### functions to fit ssr and make predictions
+### functions to fit ssr and make predictions and forecasts
 
 #' Assemble a list of control parameters for the ssr function
 #' 
