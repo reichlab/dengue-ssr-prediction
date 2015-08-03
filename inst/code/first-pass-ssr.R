@@ -58,50 +58,74 @@ p1 + facet_wrap(~ season)
 
 
 # 1, 13, 26, 39, and 52 weeks ahead density predictions, for plots
+options(error = recover)
 target_inds <- which(sj$season == "2008/2009")
-ssr_ests <- rbind.fill(lapply(c(1, 13, 26, 39, 52), function(prediction_steps) {
-    last_obs_season_week_and_prediction_steps_combos <- lapply(target_inds,
+#prediction_horizon <- 1
+
+ssr_ests <- rbind.fill(lapply(c(1, 13, 26, 39, 52), function(prediction_horizon) {
+    last_obs_season_week_and_prediction_horizon_combos <- lapply(target_inds,
         function(ti) {
-            list(last_obs_season = as.character(sj$season[ti - prediction_steps]),
-                last_obs_week = sj$season_week[ti - prediction_steps],
-                prediction_steps = prediction_steps)
+            list(last_obs_season = as.character(sj$season[ti - prediction_horizon]),
+                last_obs_week = sj$season_week[ti - prediction_horizon],
+                prediction_horizon = prediction_horizon)
         }
     )
-        
-    rbind.fill(lapply(last_obs_season_week_and_prediction_steps_combos,
+#    params <- last_obs_season_week_and_prediction_horizon_combos[[1]]
+    
+    rbind.fill(lapply(last_obs_season_week_and_prediction_horizon_combos,
         function(params) {
-            ssr_predict_dengue_stepsahead_one_week(
+            preds <- ssr_predict_dengue_one_week(
                 last_obs_season = params$last_obs_season,
                 last_obs_week = params$last_obs_week,
-                theta = 10,
-                tr_lag = 1,
-                prediction_steps = params$prediction_steps,
+                lags = list(smooth_log_cases = c(0, 1)),
+                theta=list(smooth_log_cases_lag0=list(bw=.1),
+                    smooth_log_cases_lag1=list(bw=.1)),
+                prediction_horizon = params$prediction_horizon,
                 data = sj,
-                prediction_types = "density")$density_preds
+				season_var = "season",
+				week_var = "season_week",
+                X_names = c("smooth_log_cases"),
+                y_name = c("total_cases"),
+                time_name = "week_start_date",
+                prediction_types = "density")$dist_preds
+            preds$last_obs_season <- params$last_obs_season
+            preds$last_obs_week <- params$last_obs_week
+            last_obs_ind <- which(sj[["season"]] == params$last_obs_season &
+                    sj[["season_week"]] == params$last_obs_week)
+            temp <- get_prediction_season_week(last_obs_ind,
+                params$prediction_horizon,
+                sj,
+                season_var = "season",
+                week_var = "season_week")
+            preds$prediction_season <- temp$season
+            preds$prediction_week <- temp$week
+            preds$prediction_horizon <- params$prediction_horizon
+            
+            return(preds)
         }
     ))
 }))
 
 
 sj$season_season_week <- paste(as.character(sj$season), sj$season_week, sep = "-")
-ssr_ests$season_season_week <- paste(ssr_ests$season, ssr_ests$season_week,
+ssr_ests$season_season_week <- paste(ssr_ests$prediction_season, ssr_ests$prediction_week,
     sep = "-")
 
-ssr_ests$model <- paste0("ssr_p_", ssr_ests$prediction_step)
+ssr_ests$model <- paste0("ssr_p_", ssr_ests$prediction_horizon)
 
 ## get naive model estimates -- only handles holdout_seasons with length 1?
 get_season_week_kde_ests_one_week <- function(wk, holdout_seasons, data) {
     inds <- which(!(data$season %in% holdout_seasons) & data$season_week == wk)
     
     ## do weighted kde
-    kde_log_scale <- density(data[inds, "log_total_cases"],
-        bw = "SJ")
+#    kde_log_scale <- density(data[inds, "log_total_cases"],
+#        bw = "SJ")
     kde_orig_scale <- density(data[inds, "total_cases"],
         bw = "SJ")
     
-    return(data.frame(log_total_cases = kde_log_scale$x,
+    return(data.frame(#log_total_cases = kde_log_scale$x,
             total_cases = kde_orig_scale$x,
-            est_density_log_scale = kde_log_scale$y,
+#            est_density_log_scale = kde_log_scale$y,
             est_density_orig_scale = kde_orig_scale$y,
             season = rep(holdout_seasons, each = length(kde_orig_scale$x)),
             season_week = wk
@@ -119,6 +143,9 @@ season_week_kde_ests$model <- "naive"
 
 
 # combine estimates from ssr with various lags and naive model
+ssr_ests$total_cases <- ssr_ests$x
+ssr_ests$est_density_orig_scale <- ssr_ests$est_density
+ssr_ests$season_week <- ssr_ests$prediction_week
 combined_ests <- rbind.fill(ssr_ests, season_week_kde_ests)
 
 
@@ -133,18 +160,19 @@ obs_counts <- melt(obs_counts, id = c("season", "season_week", "season_season_we
 
 ## plot estimates, compared with observed cases and smoothed cases
 ## log scale
-p <- ggplot() +
-    geom_line(aes(x = log_total_cases, y = est_density_log_scale, colour = model), data = combined_ests) +
-    geom_vline(aes(xintercept = value, linetype = variable), data = obs_counts[obs_counts$variable %in% c("smooth_log_cases", "log_total_cases"), ], show_guide = TRUE) +
-    facet_wrap(~ season_week) +
-    ggtitle("Predictions by week for 2008/2009 season (log scale)") +
-    theme_bw()
-
-print(p)
+# p <- ggplot() +
+#     geom_line(aes(x = log_total_cases, y = est_density_log_scale, colour = model), data = combined_ests) +
+#     geom_vline(aes(xintercept = value, linetype = variable), data = obs_counts[obs_counts$variable %in% c("smooth_log_cases", "log_total_cases"), ], show_guide = TRUE) +
+#     facet_wrap(~ season_week) +
+#     ggtitle("Predictions by week for 2008/2009 season (log scale)") +
+#     theme_bw()
+# 
+# print(p)
 
 ## original scale
 p <- ggplot() +
     geom_line(aes(x = total_cases, y = est_density_orig_scale, colour = model), data = combined_ests) +
+    geom_line(aes(x = total_cases, y = est_density, colour = model), data = combined_ests) +
     geom_vline(aes(xintercept = value, linetype = variable), data = obs_counts[obs_counts$variable %in% c("exp_smooth_log_cases", "total_cases"), ], show_guide = TRUE) +
     coord_cartesian(xlim = c(0, 50)) +
     facet_wrap(~ season_week) +
@@ -157,38 +185,61 @@ print(p)
 
 
 ## compute point estimates and get MASE for each lag and naive model
-target_inds <- which(sj$season == "2008/2009")
-prediction_steps_vec <- 1:52
-#prediction_steps_vec <- c(1, 13, 26, 39, 52)
-ssr_pt_ests <- rbind.fill(lapply(prediction_steps_vec, function(prediction_steps) {
-    last_obs_season_week_and_prediction_steps_combos <- lapply(target_inds,
+holdout_seasons <- c("2007/2008", "2008/2009")
+target_inds <- which(sj$season %in% holdout_seasons)
+prediction_horizons_vec <- 1:52
+ssr_pt_ests <- rbind.fill(lapply(prediction_horizons_vec, function(prediction_horizon) {
+    last_obs_season_week_and_prediction_horizon_combos <- lapply(target_inds,
         function(ti) {
-            list(last_obs_season = as.character(sj$season[ti - prediction_steps]),
-                last_obs_week = sj$season_week[ti - prediction_steps],
-                prediction_steps = prediction_steps)
-         }
+            list(last_obs_season = as.character(sj$season[ti - prediction_horizon]),
+                last_obs_week = sj$season_week[ti - prediction_horizon],
+                prediction_horizon = prediction_horizon)
+        }
     )
 
-    rbind.fill(lapply(last_obs_season_week_and_prediction_steps_combos,
+    rbind.fill(lapply(last_obs_season_week_and_prediction_horizon_combos,
         function(params) {
-            ssr_predict_dengue_stepsahead_one_week(
+            preds <- ssr_predict_dengue_one_week(
                 last_obs_season = params$last_obs_season,
                 last_obs_week = params$last_obs_week,
-                theta = 10,
-                tr_lag = 1,
-                prediction_steps = params$prediction_steps,
+                lags = list(smooth_log_cases = c(0, 1)),
+                theta=list(smooth_log_cases_lag0=list(bw=.1),
+                    smooth_log_cases_lag1=list(bw=.1)),
+                prediction_horizon = params$prediction_horizon,
                 data = sj,
+                season_var = "season",
+                week_var = "season_week",
+                X_names = c("smooth_log_cases"),
+                y_name = c("total_cases"),
+                time_name = "week_start_date",
                 prediction_types = "pt")$pt_preds
+            preds$last_obs_season <- params$last_obs_season
+            preds$last_obs_week <- params$last_obs_week
+            last_obs_ind <- which(sj[["season"]] == params$last_obs_season &
+                    sj[["season_week"]] == params$last_obs_week)
+            temp <- get_prediction_season_week(last_obs_ind,
+                params$prediction_horizon,
+                sj,
+                season_var = "season",
+                week_var = "season_week")
+            preds$prediction_season <- temp$season
+            preds$prediction_week <- temp$week
+            preds$prediction_horizon <- params$prediction_horizon
+            
+            return(preds)
         }
     ))
 }))
 
 
 sj$season_season_week <- paste(as.character(sj$season), sj$season_week, sep = "-")
+ssr_pt_ests$est_total_cases_orig_scale <- ssr_pt_ests$pt_est
+ssr_pt_ests$season_week <- ssr_pt_ests$prediction_week
+ssr_pt_ests$season <- ssr_pt_ests$prediction_season
 ssr_pt_ests$season_season_week <- paste(ssr_pt_ests$season, ssr_pt_ests$season_week,
     sep = "-")
 
-ssr_pt_ests$model <- paste0("ssr_p_", ssr_pt_ests$prediction_step)
+ssr_pt_ests$model <- paste0("ssr_p_", ssr_pt_ests$prediction_horizon)
 
 ## get naive model point estimates -- only handles holdout_seasons with length 1?
 ## turn this and naive density estimates function above into more real functions
@@ -209,7 +260,7 @@ get_season_week_pt_ests_one_week <- function(wk, holdout_seasons, data) {
 
 season_week_pt_ests <- rbind.fill(
     lapply(seq_len(52), get_season_week_pt_ests_one_week,
-        holdout_seasons = "2008/2009",
+        holdout_seasons = holdout_seasons,
         data = sj)
 )
 
@@ -219,6 +270,14 @@ season_week_pt_ests$model <- "naive"
 
 # combine estimates from ssr with various lags and naive model
 combined_pt_ests <- rbind.fill(ssr_pt_ests, season_week_pt_ests)
+
+
+sj_inds_keep <- seq_len(nrow(sj))[sj$season_season_week %in%
+				ssr_pt_ests$season_season_week]
+obs_counts <- sj[sj_inds_keep,
+		c("smooth_log_cases", "log_total_cases", "total_cases", "season_season_week", "season", "season_week")]
+obs_counts$exp_smooth_log_cases <- exp(obs_counts$smooth_log_cases)
+obs_counts <- melt(obs_counts, id = c("season", "season_week", "season_season_week"))
 
 
 # get mase for all models and plot
@@ -240,5 +299,3 @@ ggplot() +
     coord_cartesian(ylim = c(0, 5.1)) +
     ggtitle("MASE for SSR at prediction steps = 1, ..., 52\ncompared with naive weekly model\n in 2008/2009 season") +
     theme_bw()
-
-
