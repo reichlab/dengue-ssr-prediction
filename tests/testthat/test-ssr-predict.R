@@ -3,8 +3,159 @@ library(magrittr)
 library(plyr)
 library(dplyr)
 
+## all functions in ssr.R
+##   leading X means test written,
+##   leading I means implicitly tested by another test
+##   leading S means simple enough that no test is required
+##   no leading character means test needs to be written still
+# S "assemble_prediction_examples"                       
+# X "assemble_training_examples"                         
+# X "compute_kernel_values"                              
+# X "compute_lagged_obs_vecs"                            
+# X "compute_normalized_log_weights"                     
+# S "create_ssr_control"                                 
+# S "create_ssr_control_default"                         
+#   "discrete_kernel"                                    
+#   "est_ssr_params_stepwise_crossval"                   
+#   "est_ssr_params_stepwise_crossval_one_potential_step"
+# S "get_default_kernel_fns"                             
+#   "get_dist_predictions_one_week"                      
+# S "get_inds_smallest_k"                                
+# X "get_kernel_fn_init_params"                          
+#   "get_prediction_season_week"                         
+#   "get_pt_predictions_one_week"                        
+# S "periodic_kernel"                                    
+# S "squared_exp_kernel"                                 
+#   "ssr"                                                
+#   "ssr_crossval_estimate_parameter_loss"               
+#   "ssr_predict"                                        
+#   "ssr_predict_dengue_one_week"                        
+#   "ssr_predict_given_lagged_obs"                       
+# X "unvectorize_theta"                                  
+# I "unvectorize_theta_one_kernel_fn"                    
+#   "validate_ssr_control"                               
+# S "vectorize_theta"
+
+
 
 context("ssr prediction functions")
+
+test_that("get_kernel_fn_init_params works", {
+    expected <- list(bw=1, period=1)
+    
+    actual <- get_kernel_fn_init_params("b",
+        ssr_control=list(theta_est=list(a="bw", b=c("bw", "period"))))
+    
+    expect_identical(actual, expected)
+})
+
+test_that("unvectorize_theta works, no fixed params", {
+    theta <- list(a_lag1=list(bw=1),
+        a_lag5=list(bw=15),
+        b_lag0=list(bw=3,
+            period=12),
+        b_lag2=list(bw=2,
+            period=987))
+    
+    lags <- list(a=c(1, 5),
+        b=c(0, 2))
+    
+    expected <- theta
+    
+    actual <- unvectorize_theta(vectorize_theta(theta),
+        lags,
+        ssr_control=list(theta_est=list(a="bw", b=c("bw", "period"))),
+        add_fixed_params=FALSE)
+    
+    expect_identical(actual, expected)
+})
+
+test_that("unvectorize_theta works, fixed params not included", {
+    theta <- list(a_lag1=list(bw=1),
+        a_lag5=list(bw=15),
+        b_lag0=list(bw=3,
+            period=12),
+        b_lag2=list(bw=2,
+            period=987))
+    
+    lags <- list(a=c(1, 5),
+        b=c(0, 2))
+    
+    expected <- list(a_lag1=list(bw=1),
+        a_lag5=list(bw=15),
+        b_lag0=list(bw=3),
+        b_lag2=list(bw=2))
+    
+    actual <- unvectorize_theta(vectorize_theta(theta),
+        lags,
+        ssr_control=list(theta_est=list(a="bw", b=c("bw")),
+            theta_fixed=list(b=list(period=15))),
+        add_fixed_params=FALSE)
+    
+    expect_identical(actual, expected)
+})
+
+test_that("unvectorize_theta works, fixed params included", {
+    theta <- list(a_lag1=list(bw=1),
+        a_lag5=list(bw=15),
+        b_lag0=list(bw=3,
+            period=12),
+        b_lag2=list(bw=2,
+            period=987))
+    
+    lags <- list(a=c(1, 5),
+        b=c(0, 2))
+    
+    expected <- list(a_lag1=list(bw=1),
+        a_lag5=list(bw=15),
+        b_lag0=list(bw=3, period=15),
+        b_lag2=list(bw=2, period=15))
+    
+    actual <- unvectorize_theta(vectorize_theta(theta),
+        lags,
+        ssr_control=list(theta_est=list(a="bw", b=c("bw")),
+            theta_fixed=list(b=list(period=15))),
+        add_fixed_params=TRUE)
+    
+    expect_identical(actual, expected)
+})
+
+
+test_that("compute_normalized_log_weights works", {
+    init_val <- c(0, -100, -50, -78, -99, -0.2)
+    
+    result <- compute_normalized_log_weights(init_val)
+    
+    expect_equal(sum(exp(result)), 1)
+    expect_true(all.equal(init_val - result,
+        rep(init_val[1] - result[1], length(init_val))))
+})
+
+test_that("assemble_training_examples works", {
+    test_data <- data.frame(a = 1:20, b = rnorm(20))
+    lags <- list(a = c(1, 5), b = c(0, 2))
+    leading_rows_to_drop <- 6
+
+    actual <- assemble_training_examples(test_data,
+        lags,
+        y_names="b",
+        leading_rows_to_drop=leading_rows_to_drop,
+        additional_rows_to_drop=c(14, 15, 18),
+        prediction_horizon = 2,
+        drop_trailing_rows=TRUE)
+    
+    expected_lagged <- compute_lagged_obs_vecs(test_data,
+        lags,
+        c(seq_len(leading_rows_to_drop), c(14, 15, 18, 19, 20)))
+    expected_lead <- test_data[1:20 + 2, "b", drop=FALSE]
+    expected_lead <- expected_lead[
+        -c(seq_len(leading_rows_to_drop), c(14, 15, 18, 19, 20)), , drop=FALSE]
+    expected <- list(lagged_obs=expected_lagged,
+        lead_obs=expected_lead
+    )
+    
+    expect_identical(actual, expected)
+})
 
 test_that("compute_lagged_obs_vecs works -- all variables used", {
     test_data <- data.frame(a = 1:10, b = rnorm(10))
@@ -18,7 +169,7 @@ test_that("compute_lagged_obs_vecs works -- all variables used", {
         b_lag0=b,
         b_lag2=lag(b, 2))
     expected <- expected[seq(from=7, to=9), 3:6]
-  
+    
     actual <- compute_lagged_obs_vecs(test_data,
         lags,
         c(seq_len(leading_rows_to_drop),
@@ -79,7 +230,7 @@ test_that("compute_kernel_values works", {
             b_lag0=list(bw=1.4),
             b_lag2=list(bw=1.5),
             b_lag3=list(bw=0.8)),
-        control=list(kernel_fns=list(a="squared_exp_kernel",
+        ssr_control=list(kernel_fns=list(a="squared_exp_kernel",
             b="squared_exp_kernel")),
         log = TRUE)
     

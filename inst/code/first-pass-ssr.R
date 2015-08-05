@@ -299,3 +299,55 @@ ggplot() +
     coord_cartesian(ylim = c(0, 5.1)) +
     ggtitle("MASE for SSR at prediction steps = 1, ..., 52\ncompared with naive weekly model\n in 2008/2009 season") +
     theme_bw()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+### get ssr fit
+library(doMC)
+
+registerDoMC(cores=5)        ## number of cores on this machine
+
+set.seed(998468235L,kind="L'Ecuyer")
+mcopts <- list(preschedule=FALSE,set.seed=TRUE)
+
+
+ssr_control <- create_ssr_control(X_names="smooth_log_cases",
+    y_names="total_cases",
+    time_name=NULL,
+    max_lag=list(smooth_log_cases=1),
+    prediction_horizon=1,
+    kernel_fns=list(smooth_log_cases="squared_exp_kernel"),
+    theta_est=list(smooth_log_cases="bw"),
+    theta_fixed=list(),
+    theta_transform_fns=list(
+        squared_exp_kernel=list(
+            bw=list(transform="log",
+                detransform="exp")
+        )
+    ),
+    crossval_buffer=52,
+    loss_fn_name="mae_from_kernel_weights_and_centers",
+    loss_fn_args=list())
+
+options(error=recover)
+debug(ssr_crossval_estimate_parameter_loss)
+ssr_fit <- ssr(X_names="smooth_log_cases",
+    y_names="total_cases",
+    time_name=NULL,
+    data=sj,
+    ssr_control=ssr_control)

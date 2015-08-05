@@ -39,5 +39,9 @@ mase <- function(obs, pred) {
 #' @param obs vector of observed values
 #' @param pred vector of point predictions
 mae <- function(obs, pred) {
+    if(length(obs) != length(pred)) {
+        stop("obs and pred must have the same length")
+    }
+    
     return(mean(abs(obs - pred)))
 }
