@@ -16,6 +16,8 @@
 #'     used in the observation weighting process; entries give the maximum
 #'     number of lag time steps that may included in the lagged observation
 #'     vector for the corresponding variable
+#' @param prediction_horizon integer: the number of time steps between the last
+#'     observation and the time at which we make a prediction
 #' @param kernel_fns a named list: names are the names of variables that can be
 #'     used in the observation weighting process or the lead process; entries
 #'     are the names of functions to use in computing the value of the kernel
@@ -127,7 +129,7 @@ create_ssr_control_default <- function(X_names, y_names, time_name, data) {
 }
 
 #' Get default kernel functions based on a brief look at the data.  This is
-#' unreliable.
+#' unreliable.  Update to return periodic_kernel if X_names[i] == time_name?
 #' 
 #' @param X_names a character vector of length >= 1 containing names of
 #'     variables in the data data frame to use in forming the lagged
@@ -152,7 +154,7 @@ get_default_kernel_fns <- function(X_names, y_names, time_name, data) {
     return(kernel_fns)
 }
 
-#' Validate ssr_control parameters for ssr
+#' Validate ssr_control parameters for ssr -- not implemented
 #' 
 #' @param ssr_control a list of ssr_control parameters for ssr
 #' @param X_names a character vector of length >= 1 containing names of
@@ -172,7 +174,9 @@ validate_ssr_control <- function(ssr_control, X_names, y_names, time_name, data)
 
 ### functions for parameter estimation
 
-#' Estimate the parameters for ssr.
+#' Estimate the parameters for ssr.  There is redundancy here in that X_names,
+#' y_names, time_name are all included in the ssr_control object as well as
+#' parameters to this function.  Decide on an interface.
 #' 
 #' @param X_names a character vector of length >= 1 containing names of
 #'     variables in the data data frame to use in forming the lagged
@@ -185,7 +189,8 @@ validate_ssr_control <- function(ssr_control, X_names, y_names, time_name, data)
 #' @param ssr_control a list of parameters ssr_controlling how the fit is done.
 #'     See the documentation for ssr_control.
 #' 
-#' @return an object representing an estimated ssr model
+#' @return an object representing an estimated ssr model.  Currently, a list
+#'     with 7 components.
 ssr <- function(X_names,
         y_names,
         time_name,
@@ -245,6 +250,8 @@ est_ssr_params_stepwise_crossval <- function(data, ssr_control) {
         ## adding or removing each variable/lag combination (except for the one
         ## updated in the previous iteration) from the model, as well as the
         ## corresponding parameter estimates
+        
+        ## commented out use of foreach for debugging purposes
 #        crossval_results <- foreach(i=seq_along(all_lags_as_list),
 #            .packages=c("ssr", ssr_control$par_packages),
 #            .combine="c") %do% {
@@ -274,9 +281,9 @@ est_ssr_params_stepwise_crossval <- function(data, ssr_control) {
         })
         optimal_loss_ind <- which.min(loss_achieved)
         
-        print("loss achieved is:")
-        print(loss_achieved)
-        print("\n")
+#        print("loss achieved is:")
+#        print(loss_achieved)
+#        print("\n")
         
         ## either update the model and keep going or stop the search
         if(loss_achieved[optimal_loss_ind] < crossval_prediction_loss) {
@@ -294,6 +301,28 @@ est_ssr_params_stepwise_crossval <- function(data, ssr_control) {
         theta_hat=theta_hat))
 }
 
+#' Estimate the parameters theta and corresponding cross-validated estimate of
+#' loss for one possible model obtained by adding or removing a variable/lag
+#' combination from the model obtained in the previous iteration of the stepwise
+#' search procedure.
+#' 
+#' @param prev_lags list representing combinations of variables and lags
+#'     included in the model obtained at the previous step
+#' @param prev_theta list representing the kernel parameter estimates obtained
+#'     at the previous step
+#' @param update_var_name the name of the variable to try adding or removing
+#'     from the model
+#' @param update_lag_value the value of the lag for the variable specified by
+#'     update_var_name to try adding or removing from the model
+#' @param data the data frame with observations used in estimating model
+#'     parameters
+#' @param ssr_control a list of parameters specifying how the fitting is done
+#' 
+#' @return a list with three components: loss is a cross-validation estimate of
+#'     the loss associated with the estimated parameter values for the given
+#'     model, lags is a list representing combinations of variables and lags
+#'     included in the updated model, and theta is a list representing the
+#'     kernel parameter estimates in the updated model
 est_ssr_params_stepwise_crossval_one_potential_step <- function(prev_lags,
     prev_theta,
     update_var_name,
@@ -338,8 +367,8 @@ est_ssr_params_stepwise_crossval_one_potential_step <- function(prev_lags,
         ## ensure lags and theta are in order by variable name
         ## note that the lag values are not in the same order -- lags orders as
         ## numeric, but theta orders as character
-        ## for our code, this doesn't matter -- just need a consistent order
-        ## within each.
+        ## I don't actually rely on order right now, use names instead.
+        ## Keeping this in case.
         updated_lags <- updated_lags[order(names(updated_lags))]
         updated_theta <- updated_theta[order(names(updated_theta))]
     }
@@ -388,12 +417,13 @@ est_ssr_params_stepwise_crossval_one_potential_step <- function(prev_lags,
 #' 
 #' @param theta_vector vector of kernel function parameters that are being
 #'     estimated
-#' @param lags
-#' @param data
-#' @param ssr_control
+#' @param lags list representing combinations of variables and lags
+#'     included in the model
+#' @param data the data frame to use in performing cross validation
+#' @param ssr_control a list of parameters specifying how the fitting is done
 #' 
-#' @return numeric -- cross-validation loss associated with the specified
-#'     parameters
+#' @return numeric -- cross-validation estimate of loss associated with the
+#'     specified parameters
 ssr_crossval_estimate_parameter_loss <- function(theta_vector,
     lags,
     data,
@@ -483,7 +513,7 @@ ssr_crossval_estimate_parameter_loss <- function(theta_vector,
 get_kernel_fn_init_params <- function(var_name, ssr_control) {
     return_val <- list()
     for(i in seq_along(ssr_control$theta_est[[var_name]])) {
-        return_val[[ssr_control$theta_est[[var_name]][i]]] <- 1
+        return_val[[ssr_control$theta_est[[var_name]][i]]] <- 0.1
     }
     
     return(return_val)
@@ -501,7 +531,8 @@ vectorize_theta <- function(theta_list) {
 #' Convert theta from vector form to list form
 #' 
 #' @param theta_vector kernel parameters theta in vector form
-#' @param lags all lags
+#' @param lags list representing combinations of variables and lags
+#'     included in the model
 #' @param ssr_control control parameters for the ssr fit
 #' @param add_fixed_params boolean -- should parameters that are being held
 #'     fixed in the estimation process be added to the return value?
@@ -605,9 +636,15 @@ unvectorize_theta_one_kernel_fn <- function(theta_vector,
     lag_value,
     ssr_control) {
     return_val <- list()
+    
+    ## iterate over the parameters that are being estimated
     for(i in seq_along(ssr_control$theta_est[[var_name]])) {
+        ## name of parameter
         param_name <- ssr_control$theta_est[[var_name]][i]
+        ## combined variable name, lag value, and parameter name
+        ## used as lookup name in vector
         vector_elt_name <- paste0(var_name, "_lag", lag_value, ".", param_name)
+        ## store parameter value
         return_val[[param_name]] <- unname(theta_vector[vector_elt_name])
     }
     
@@ -625,17 +662,21 @@ unvectorize_theta_one_kernel_fn <- function(theta_vector,
 #'     to perform prediction
 #' @param normalize_weights boolean, should the weights be normalized?
 #' 
-#' @return a list with two components:
-#'     kernel_weights: a list with one component for each element of prediction_horizons.
-#'         component p is a T_train by T_predict matrix, where
-#'         T_train = length(train_data) and T_predict = nrow(predict_data).
-#'     kernel_centers: a copy of the train_data argument.
+#' @return a list with three components:
+#'     log_weights: a vector of length = length(train_lagged_obs) with
+#'         the log of weights assigned to each observation (up to a constant of
+#'         proportionality if normalize_weights is FALSE)
+#'     weights: a vector of length = length(train_lagged_obs) with
+#'         the weights assigned to each observation (up to a constant of
+#'         proportionality if normalize_weights is FALSE)
+#'     centers: a copy of the train_lead_obs argument -- kernel centers
 ssr_predict <- function(ssr_fit,
         prediction_data,
         leading_rows_to_drop=max(unlist(ssr_fit$lags_hat)),
         additional_training_rows_to_drop=NULL,
         prediction_horizon,
         normalize_weights=TRUE) {
+    ## get training and prediction examples
     training_examples <- assemble_training_examples(ssr_fit$train_data,
         ssr_fit$lags_hat,
         ssr_fit$y_names,
@@ -656,6 +697,31 @@ ssr_predict <- function(ssr_fit,
         prediction_horizon)
 }
 
+#' Construct data frame of lagged observation vectors and data frame of
+#' corresponding prediction targets.
+#' 
+#' @param data data frame with observations of all variables at all times
+#' @param lags list representing combinations of variables and lags
+#'     included in the lagged observation vectors
+#' @param y_names names of variables included as prediction targets
+#' @param leading_rows_to_drop an integer specifying the number of leading rows
+#'     to drop.  This will typically be max(unlist(lags)), but could be larger
+#'     for example if we are in the process of searching lags to determine
+#'     which ones to include.  Then for example if our search is for lags up to
+#'     52, we would want to set leading_rows_to_drop = 52.
+#' @param additional_rows_to_drop an integer vector specifying indices of
+#'     additional rows to drop.  For example, if we are performing
+#'     cross-validation, we might want to drop all rows within +/- 52 indices of
+#'     the current prediction target.
+#' @param prediction_horizon an integer specifying the number of time steps
+#'     between the last observation and the prediction target.
+#' @param drop_trailing_rows boolean:  drop the last prediction_horizon rows?
+#'     These are the rows for which we can form lagged observation vectors, but
+#'     we cannot obtain a corresponding prediction target.
+#'     
+#' @return a list with two components: lagged_obs is a data frame with lagged
+#'     observation vectors, and lead_obs is a data frame with corresponding
+#'     prediction targets.
 assemble_training_examples <- function(data,
     lags,
     y_names,
@@ -695,6 +761,19 @@ assemble_training_examples <- function(data,
         lead_obs=train_lead_obs))
 }
 
+#' Construct data frame of lagged observation vectors.
+#' 
+#' @param data data frame with observations of all variables at all times
+#' @param lags list representing combinations of variables and lags
+#'     included in the lagged observation vectors
+#' @param leading_rows_to_drop an integer specifying the number of leading rows
+#'     to drop.  This will typically be max(unlist(lags)), but could be larger
+#'     for example if we are in the process of searching lags to determine
+#'     which ones to include.  Then for example if our search is for lags up to
+#'     52, we would want to set leading_rows_to_drop = 52.
+#'     
+#' @return a list with one component: lagged_obs is a data frame with lagged
+#'     observation vectors.
 assemble_prediction_examples <- function(data,
     lags,
     leading_rows_to_drop) {
@@ -807,7 +886,7 @@ compute_kernel_values <- function(train_lagged_obs,
             kernel_fn_args$center <- prediction_lagged_obs[[col_name]]
             kernel_fn_args$log <- TRUE
             
-            ## call kernel function
+            ## call kernel function and store results
             log_kernel_component_values[, col_name] <<- 
                 do.call(ssr_control$kernel_fns[[vname]], kernel_fn_args)
         })
@@ -1071,13 +1150,28 @@ get_prediction_season_week <- function(last_obs_ind, prediction_horizon, data, s
 
 ### loss functions
 
+#' Compute MASE from predictions that are in the form of kernel weights and
+#' centers.  This is currently broken because we need predictions for a whole
+#' time series to compute MASE, and the current "implementation" only takes
+#' values for one time point....
 mase_from_kernel_weights_and_centers <- function(
     kernel_weights_and_centers,
     obs) {
+    stop("mase_from_kernel_weights_and_centers is broken -- do not use")
     pred <- get_pt_predictions_one_week(kernel_weights_and_centers)
     mase(obs, pred)
 }
 
+#' Compute "mean" absolute error for one time point from prediction in the form
+#' of kernel weights and centers.
+#' 
+#' @param kernel_weights_and_centers a named list with two components: weights
+#'     is a vector of kernel weights, and centers is a vector of kernel centers
+#' @param obs is a numeric with length 1 containign the observed value for one
+#'     time point
+#' 
+#' @return abs(obs - prediction) where prediction is the weighted mean of the
+#'     kernel centers.
 mae_from_kernel_weights_and_centers <- function(
     kernel_weights_and_centers,
     obs) {
