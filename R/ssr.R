@@ -289,6 +289,7 @@ est_ssr_params_stepwise_crossval <- function(data, ssr_control) {
         if(loss_achieved[optimal_loss_ind] < crossval_prediction_loss) {
             ## found a model improvement -- update and continue
             selected_var_lag_ind <- optimal_loss_ind
+            crossval_prediction_loss <- loss_achieved[selected_var_lag_ind]
             lags_hat <- crossval_results[[selected_var_lag_ind]]$lags
             theta_hat <- crossval_results[[selected_var_lag_ind]]$theta
         } else {
