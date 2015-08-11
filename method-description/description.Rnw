@@ -1,54 +1,6 @@
 \documentclass[fleqn]{article}\usepackage[]{graphicx}\usepackage[]{color}
-%% maxwidth is the original width if it is less than linewidth
-%% otherwise use linewidth (to make sure the graphics do not exceed the margin)
-\makeatletter
-\def\maxwidth{ %
-  \ifdim\Gin@nat@width>\linewidth
-    \linewidth
-  \else
-    \Gin@nat@width
-  \fi
-}
-\makeatother
 
-\definecolor{fgcolor}{rgb}{0.345, 0.345, 0.345}
-\newcommand{\hlnum}[1]{\textcolor[rgb]{0.686,0.059,0.569}{#1}}%
-\newcommand{\hlstr}[1]{\textcolor[rgb]{0.192,0.494,0.8}{#1}}%
-\newcommand{\hlcom}[1]{\textcolor[rgb]{0.678,0.584,0.686}{\textit{#1}}}%
-\newcommand{\hlopt}[1]{\textcolor[rgb]{0,0,0}{#1}}%
-\newcommand{\hlstd}[1]{\textcolor[rgb]{0.345,0.345,0.345}{#1}}%
-\newcommand{\hlkwa}[1]{\textcolor[rgb]{0.161,0.373,0.58}{\textbf{#1}}}%
-\newcommand{\hlkwb}[1]{\textcolor[rgb]{0.69,0.353,0.396}{#1}}%
-\newcommand{\hlkwc}[1]{\textcolor[rgb]{0.333,0.667,0.333}{#1}}%
-\newcommand{\hlkwd}[1]{\textcolor[rgb]{0.737,0.353,0.396}{\textbf{#1}}}%
-
-\usepackage{framed}
-\makeatletter
-\newenvironment{kframe}{%
- \def\at@end@of@kframe{}%
- \ifinner\ifhmode%
-  \def\at@end@of@kframe{\end{minipage}}%
-  \begin{minipage}{\columnwidth}%
- \fi\fi%
- \def\FrameCommand##1{\hskip\@totalleftmargin \hskip-\fboxsep
- \colorbox{shadecolor}{##1}\hskip-\fboxsep
-     % There is no \\@totalrightmargin, so:
-     \hskip-\linewidth \hskip-\@totalleftmargin \hskip\columnwidth}%
- \MakeFramed {\advance\hsize-\width
-   \@totalleftmargin\z@ \linewidth\hsize
-   \@setminipage}}%
- {\par\unskip\endMakeFramed%
- \at@end@of@kframe}
-\makeatother
-
-\definecolor{shadecolor}{rgb}{.97, .97, .97}
-\definecolor{messagecolor}{rgb}{0, 0, 0}
-\definecolor{warningcolor}{rgb}{1, 0, 1}
-\definecolor{errorcolor}{rgb}{1, 0, 0}
-\newenvironment{knitrout}{}{} % an empty environment to be redefined in TeX
-
-\usepackage{alltt}\usepackage[]{graphicx}\usepackage[]{color}
-
+\usepackage[affil-it]{authblk}
 \usepackage{amssymb, amsmath, amsthm, amsfonts}
 %\usepackage{booktabs}
 %\usepackage{array}
@@ -62,15 +14,34 @@
 \newcommand{\norm}[1]{\vert\vert #1 \vert\vert}
 \newcommand{\ind}{\mathbb{I}}
 
-\title{Method Description for Dengue Prediction Challenge}
+\title{Methods Description for Dengue Prediction \\ Reich Lab Team}
 \date{}
-\author{Evan L. Ray (and anyone else)}
-\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+\author{Evan L. Ray, Krzysztof Sakrejda, Nicholas G. Reich\thanks{Email: \texttt{nick@schoolph.umass.edu}; Corresponding author} and Stephen A. Lauer}
+\affil{Department of Biostatistics and Epidemiology, University of Massachusetts -- Amherst, Amherst, MA}
+
 \begin{document}
 
+<<InitialBlock, echo = FALSE>>=
+opts_knit$set(concordance=TRUE)
+opts_chunk$set(echo=FALSE)
 
+suppressMessages(library(lubridate))
+
+suppressMessages(library(grid))
+suppressMessages(library(ggplot2))
+
+suppressMessages(library(plyr))
+suppressMessages(library(dplyr))
+suppressMessages(library(reshape))
+
+suppressMessages(library(ssr))
+@
 
 \maketitle
+
+\section{Agreement}
+
+By submitting these forecasts, we indicate our full and unconditional agreement to abide by the project's official rules and data use agreements.
 
 \section{Introduction}
 \label{sec:Intro}
@@ -97,28 +68,42 @@ For this challenge, we use a non-parametric approach based on kernel regression 
 \begin{figure}[t!]
 \centering
 \begin{subfigure}[t]{0.475\textwidth}
-\begin{knitrout}
-\definecolor{shadecolor}{rgb}{0.969, 0.969, 0.969}\color{fgcolor}
-\includegraphics[width=\maxwidth]{figure/SJPRWeeklyCaseCounts-1} 
+<<SJPRWeeklyCaseCounts, fig.height=3.5, fig.width=3.5>>=
+sj <- San_Juan_train
 
-\end{knitrout}
+p <- ggplot(sj[sj$season %in% c("1990/1991", "1991/1992", "1992/1993"), ],
+  aes(x=week_start_date, y=total_cases)) +
+  geom_line() +
+  xlab("Time") +
+  ylab("Total Weekly Cases") +
+  ggtitle("\nTotal Weekly Cases") +
+  theme_bw()
+print(p)
+@
 \caption{Total Weekly Cases over time}
 \end{subfigure}
 ~
 \begin{subfigure}[t]{0.475\textwidth}
-\begin{knitrout}
-\definecolor{shadecolor}{rgb}{0.969, 0.969, 0.969}\color{fgcolor}
-\includegraphics[width=\maxwidth]{figure/SJPRWeeklyCaseCounts2-1} 
+<<SJPRWeeklyCaseCounts2, fig.height=3.5, fig.width=3.5>>=
+sj <- sj %>% mutate(total_cases_lag1 = lag(total_cases))
 
-\end{knitrout}
+p <- ggplot(sj[sj$season %in% c("1990/1991", "1991/1992", "1992/1993") & !is.na(sj$total_cases_lag1), ],
+  aes(x=total_cases_lag1, y=total_cases, colour=season)) +
+  geom_path() +
+  xlab("Lagged Total Weekly Cases") +
+  ylab("Total Weekly Cases") +
+  ggtitle("Lagged Total Weekly Cases\nvs Total Weekly Cases") +
+  theme_bw()
+print(p)
+@
 \caption{Lagged Total Weekly Cases vs Total Weekly Cases}
 \end{subfigure}
 \caption{Total cases by week for San Juan, Puerto Rico.}
 \label{fig:SJPRWeeklyCaseCounts}
 \end{figure}
 
-\section{Method Statement}
-\label{sec:MethodStatement}
+\section{Model Description}
+\label{sec:ModelDescription}
 
 Suppose we observe $\tilde{\bx}_t = \{\tilde{x}_{t,1}, \ldots, \tilde{x}_{t,D}\} \in \mathbb{R}^D$ at each point in time $t = 1, \ldots, T$.  Our goal is to obtain a predictive distribution for one of the observed variables over a range of prediction horizons spanning the remainder of the current season using lagged observations of all of the variables.  In order to do this, we employ weighted kernel density estimation.
 
@@ -174,6 +159,18 @@ Another alternative that we pursue is the use of smoothed observations in formin
 
 \section{Predictions for Challenge}
 \label{sec:PredictionsForChallenge}
+
+
+\section{Variables}
+\label{sec:Variables}
+
+
+\section{Computational Resources}
+\label{sec:ComputationalResources}
+
+
+\section{Publications}
+\label{sec:Publications}
 
 
 \end{document}
