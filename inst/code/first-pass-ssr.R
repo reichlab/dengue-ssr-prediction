@@ -326,6 +326,172 @@ set.seed(998468235L,kind="L'Ecuyer")
 mcopts <- list(preschedule=FALSE,set.seed=TRUE)
 
 
+
+ssr_control <- create_ssr_control(X_names=c("smooth_log_cases", "time_ind"),
+    y_names="total_cases",
+    time_name=NULL,
+    max_lag=list(smooth_log_cases=1,
+        time_ind=0),
+    prediction_horizon=1,
+    kernel_fns=list(smooth_log_cases="squared_exp_kernel",
+        time_ind="periodic_kernel"),
+    theta_est=list(smooth_log_cases="bw",
+        time_ind="bw"),
+    theta_fixed=list(time_ind=list(period=2 * pi / 52)),
+    theta_transform_fns=list(
+        squared_exp_kernel=list(
+            bw=list(transform="log",
+                detransform="exp")
+        ),
+        periodic_kernel=list(
+            bw=list(transform="log",
+                detransform="exp")
+        )
+    ),
+    crossval_buffer=52,
+    loss_fn_name="mae_from_kernel_weights_and_centers",
+    loss_fn_args=list())
+
+sj$time_ind <- seq_len(nrow(sj))
+
+options(error=recover)
+#debug(ssr_crossval_estimate_parameter_loss)
+ssr_fit <- ssr(X_names=c("smooth_log_cases", "time_ind"),
+    y_names="total_cases",
+    time_name=NULL,
+    data=sj,
+    ssr_control=ssr_control)
+
+
+
+
+
+
+### get ssr fit -- prediction horizons 1:52
+library(lubridate)
+library(ggplot2)
+library(plyr)
+library(dplyr)
+library(reshape)
+library(ssr)
+
+sj <- San_Juan_train
+
+## add lag columns
+sj <- sj %>% mutate(total_cases_lag3 = lag(total_cases, 3),
+    total_cases_lag1 = lag(total_cases))
+
+## add log column
+sj$log_total_cases <- log(sj$total_cases + 1)
+
+## add smooth log column
+sm <- loess(log_total_cases ~ as.numeric(week_start_date), data=sj, span=1/80)
+sj$smooth_log_cases <- sm$fitted
+
+library(doMC)
+
+registerDoMC(cores=5)        ## number of cores on this machine
+
+set.seed(998468235L,kind="L'Ecuyer")
+mcopts <- list(preschedule=FALSE,set.seed=TRUE)
+
+
+
+# ssr_control <- create_ssr_control(X_names=c("smooth_log_cases", "time_ind"),
+#     y_names="total_cases",
+#     time_name=NULL,
+#     max_lag=list(smooth_log_cases=1,
+#         time_ind=0),
+ssr_control <- create_ssr_control(X_names=c("smooth_log_cases"),
+    y_names="total_cases",
+    time_name=NULL,
+    max_lag=list(smooth_log_cases=0),
+    prediction_horizons=1:52,
+    kernel_fns=list(smooth_log_cases="squared_exp_kernel",
+        time_ind="periodic_kernel"),
+    theta_est=list(smooth_log_cases="bw",
+        time_ind="bw"),
+    theta_fixed=list(time_ind=list(period=2 * pi / 52)),
+    theta_transform_fns=list(
+        squared_exp_kernel=list(
+            bw=list(transform="log",
+                detransform="exp")
+        ),
+        periodic_kernel=list(
+            bw=list(transform="log",
+                detransform="exp")
+        )
+    ),
+    crossval_buffer=52,
+    loss_fn_name="mae_from_kernel_weights_and_centers",
+    loss_fn_args=list())
+
+sj$time_ind <- seq_len(nrow(sj))
+
+options(error=recover)
+#debug(ssr_crossval_estimate_parameter_loss)
+#ssr_fit <- ssr(X_names=c("smooth_log_cases", "time_ind"),
+ssr_fit <- ssr(X_names=c("smooth_log_cases"),
+    y_names="total_cases",
+    time_name=NULL,
+    data=sj,
+    ssr_control=ssr_control)
+
+
+
+
+
+
+### get ssr fit -- periodic time only
+library(doMC)
+
+registerDoMC(cores=5)        ## number of cores on this machine
+
+set.seed(998468235L,kind="L'Ecuyer")
+mcopts <- list(preschedule=FALSE,set.seed=TRUE)
+
+
+
+ssr_control <- create_ssr_control(X_names=c("time_ind"),
+    y_names="total_cases",
+    time_name=NULL,
+    max_lag=list(time_ind=0),
+    prediction_horizon=1,
+    kernel_fns=list(time_ind="periodic_kernel"),
+    theta_est=list(time_ind="bw"),
+    theta_fixed=list(time_ind=list(period=2 * pi / 52)),
+    theta_transform_fns=list(
+        periodic_kernel=list(
+            bw=list(transform="log",
+                detransform="exp")
+        )
+    ),
+    crossval_buffer=52,
+    loss_fn_name="mae_from_kernel_weights_and_centers",
+    loss_fn_args=list())
+
+sj$time_ind <- seq_len(nrow(sj))
+
+options(error=recover)
+#debug(ssr_crossval_estimate_parameter_loss)
+ssr_fit <- ssr(X_names=c("time_ind"),
+    y_names="total_cases",
+    time_name=NULL,
+    data=sj,
+    ssr_control=ssr_control)
+
+
+
+
+
+
+
+
+
+
+
+
+
 ssr_control <- create_ssr_control(X_names="smooth_log_cases",
     y_names="total_cases",
     time_name=NULL,
@@ -344,10 +510,142 @@ ssr_control <- create_ssr_control(X_names="smooth_log_cases",
     loss_fn_name="mae_from_kernel_weights_and_centers",
     loss_fn_args=list())
 
-options(error=recover)
-debug(ssr_crossval_estimate_parameter_loss)
-ssr_fit <- ssr(X_names="smooth_log_cases",
+
+
+ssr_fits_by_prediction_horizon <- lapply(seq_len(52), function(horizon) {
+    list(ssr_control=ssr_control,
+        X_names="smooth_log_cases",
+        y_names="total_cases",
+        time_name=NULL,
+        lags_hat=list(smooth_log_cases = c(0, 1)),
+        theta_hat=list(smooth_log_cases_lag0=list(bw=.1),
+            smooth_log_cases_lag1=list(bw=.1)),
+        train_data=sj)
+})
+
+make_competition_forecasts(
+    ssr_fits_by_prediction_horizon=ssr_fits_by_prediction_horizon,
+    n_sims=1000,
+    data=sj,
+    outfile_path="F:/Reich/dengue-ssr-prediction/competition-predictions",
+    location="sanjuan")
+
+
+
+
+
+ssr_control <- create_ssr_control(X_names="smooth_log_cases",
     y_names="total_cases",
     time_name=NULL,
+    max_lag=list(smooth_log_cases=1),
+    prediction_horizon=1,
+    kernel_fns=list(smooth_log_cases="squared_exp_kernel"),
+    theta_est=list(smooth_log_cases="bw"),
+    theta_fixed=list(),
+    theta_transform_fns=list(
+        squared_exp_kernel=list(
+            bw=list(transform="log",
+                detransform="exp")
+        )
+    ),
+    crossval_buffer=52,
+    loss_fn_name="mae_from_kernel_weights_and_centers",
+    loss_fn_args=list())
+
+
+
+ssr_fits_by_prediction_horizon <- lapply(seq_len(52), function(horizon) {
+    list(ssr_control=ssr_control,
+        X_names="smooth_log_cases",
+        y_names="total_cases",
+        time_name=NULL,
+        lags_hat=list(smooth_log_cases = c(0, 1)),
+        theta_hat=list(smooth_log_cases_lag0=list(bw=.1),
+            smooth_log_cases_lag1=list(bw=.1)),
+        train_data=sj)
+})
+
+make_competition_forecasts(
+    ssr_fits_by_prediction_horizon=ssr_fits_by_prediction_horizon,
+    n_sims=1000,
     data=sj,
-    ssr_control=ssr_control)
+    outfile_path="F:/Reich/dengue-ssr-prediction/competition-predictions",
+    location="sanjuan")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+library(lubridate)
+library(ggplot2)
+library(plyr)
+library(dplyr)
+library(reshape)
+library(ssr)
+
+sj <- San_Juan_train
+
+## add lag columns
+sj <- sj %>% mutate(total_cases_lag3 = lag(total_cases, 3),
+    total_cases_lag1 = lag(total_cases))
+
+## add log column
+sj$log_total_cases <- log(sj$total_cases + 1)
+
+## add smooth log column
+sm <- loess(log_total_cases ~ as.numeric(week_start_date), data=sj, span=1/80)
+sj$smooth_log_cases <- sm$fitted
+
+ssr_control <- create_ssr_control(X_names="smooth_log_cases",
+    y_names="total_cases",
+    time_name=NULL,
+    max_lag=list(smooth_log_cases=1),
+    prediction_horizon=1,
+    kernel_fns=list(smooth_log_cases="squared_exp_kernel"),
+    theta_est=list(smooth_log_cases="bw"),
+    theta_fixed=list(),
+    theta_transform_fns=list(
+        squared_exp_kernel=list(
+            bw=list(transform="log",
+                detransform="exp")
+        )
+    ),
+    crossval_buffer=52,
+    loss_fn_name="mae_from_kernel_weights_and_centers",
+    loss_fn_args=list())
+
+
+
+ssr_fit <- list(ssr_control=ssr_control,
+        X_names="smooth_log_cases",
+        y_names="total_cases",
+        time_name=NULL,
+        lags_hat=list(smooth_log_cases = c(0, 1)),
+        theta_hat=list(smooth_log_cases_lag0=list(bw=.1),
+            smooth_log_cases_lag1=list(bw=.1)),
+        train_data=sj)
+
+options(error=recover)
+options(warn=2)
+make_competition_forecasts_by_trajectory(
+    ssr_fit=ssr_fit,
+    n_sims=1000,
+    data=sj,
+    outfile_path="F:/Reich/dengue-ssr-prediction/competition-predictions-by-traj",
+    location="sanjuan")

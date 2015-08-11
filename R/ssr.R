@@ -16,8 +16,8 @@
 #'     used in the observation weighting process; entries give the maximum
 #'     number of lag time steps that may included in the lagged observation
 #'     vector for the corresponding variable
-#' @param prediction_horizon integer: the number of time steps between the last
-#'     observation and the time at which we make a prediction
+#' @param prediction_horizons integer vector: the number of time steps between
+#'     the last observation and the time at which we make a prediction
 #' @param kernel_fns a named list: names are the names of variables that can be
 #'     used in the observation weighting process or the lead process; entries
 #'     are the names of functions to use in computing the value of the kernel
@@ -50,7 +50,7 @@ create_ssr_control <- function(X_names,
         y_names,
         time_name,
         max_lag,
-        prediction_horizon,
+        prediction_horizons,
         kernel_fns,
         theta_est,
         theta_fixed,
@@ -66,7 +66,7 @@ create_ssr_control <- function(X_names,
     ssr_control$time_name <- time_name
     
     ssr_control$max_lag <- max_lag
-    ssr_control$prediction_horizon <- prediction_horizon
+    ssr_control$prediction_horizons <- prediction_horizons
     
     ssr_control$kernel_fns <- kernel_fns
     ssr_control$theta_est <- theta_est
@@ -252,17 +252,18 @@ est_ssr_params_stepwise_crossval <- function(data, ssr_control) {
         ## corresponding parameter estimates
         
         ## commented out use of foreach for debugging purposes
-#        crossval_results <- foreach(i=seq_along(all_lags_as_list),
-#            .packages=c("ssr", ssr_control$par_packages),
-#            .combine="c") %do% {
-        crossval_results <- lapply(seq_along(all_lags_as_list), function(i) {
+        crossval_results <- foreach(i=seq_along(all_lags_as_list),
+            .packages=c("ssr", ssr_control$par_packages),
+            .combine="c") %dopar% {
+#        crossval_results <- lapply(seq_along(all_lags_as_list), function(i) {
             if(length(selected_var_lag_ind) > 0 && i == selected_var_lag_ind) {
-                return(list(loss=crossval_prediction_loss,
-                    lags=lags_hat,
-                    theta=theta_hat
-                ))
+                list(
+                    list(loss=crossval_prediction_loss,
+                        lags=lags_hat,
+                        theta=theta_hat)
+                )
             } else {
- #               list( # put results in a list so that combine="c" is useful
+               list( # put results in a list so that combine="c" is useful
                     est_ssr_params_stepwise_crossval_one_potential_step(
                         prev_lags=lags_hat,
                         prev_theta=theta_hat,
@@ -270,10 +271,10 @@ est_ssr_params_stepwise_crossval <- function(data, ssr_control) {
                         update_lag_value=all_lags_as_list[[i]]$lag_value,
                         data=data,
                         ssr_control=ssr_control)
-#                )
+                )
             }
-#        }
-        })
+        }
+#        })
         
         ## pull out loss achieved by each model, find the best value
         loss_achieved <- sapply(crossval_results, function(component) {
@@ -448,7 +449,7 @@ ssr_crossval_estimate_parameter_loss <- function(theta_vector,
         ssr_control$y_names,
         leading_rows_to_drop=max(unlist(ssr_control$max_lag)),
         additional_rows_to_drop=NULL,
-        prediction_horizon=ssr_control$prediction_horizon,
+        prediction_horizons=ssr_control$prediction_horizons,
         drop_trailing_rows=TRUE)
     
     ## This could be made more computationally efficient by computing
@@ -465,18 +466,23 @@ ssr_crossval_estimate_parameter_loss <- function(theta_vector,
                 seq(from=t_pred - ssr_control$crossval_buffer,
                     to=t_pred + ssr_control$crossval_buffer))]
             
-            ## assemble lagged and lead observations -- subsets of
-            ## cross_validation_examples given by t_pred and t_train
-            train_lagged_obs <- 
-                cross_validation_examples$lagged_obs[t_train, , drop=FALSE]
-            train_lead_obs <-
-                cross_validation_examples$lead_obs[t_train, , drop=FALSE]
-            prediction_lagged_obs <-
-                cross_validation_examples$lagged_obs[t_pred, , drop=FALSE]
-            
             ## calculate kernel weights and centers for prediction at
             ## prediction_lagged_obs based on train_lagged_obs and
             ## train_lead_obs
+            ## assemble lagged and lead observations -- subsets of
+            ## cross_validation_examples given by t_pred and t_train
+            ## we can re-use the weights at different prediction_target_inds,
+            ## and just have to adjust the kernel centers
+            prediction_target_ind <- 1
+            
+            train_lagged_obs <- cross_validation_examples$lagged_obs[
+                t_train, , drop=FALSE]
+            train_lead_obs <- cross_validation_examples$lead_obs[
+                t_train, prediction_target_ind, drop=FALSE]
+            prediction_lagged_obs <- 
+                cross_validation_examples$lagged_obs[
+                    t_pred, , drop=FALSE]
+            
             kernel_weights_and_centers <- ssr_predict_given_lagged_obs(
                 train_lagged_obs=train_lagged_obs,
                 train_lead_obs=train_lead_obs,
@@ -487,16 +493,32 @@ ssr_crossval_estimate_parameter_loss <- function(theta_vector,
                 ),
                 normalize_weights=TRUE)
             
-            ## calculate and return value of loss function based on prediction
-            ## and realized value
-            loss_fn_args <- ssr_control$loss_fn_args
-            loss_fn_args$kernel_weights_and_centers <- list(
-                weights=kernel_weights_and_centers$weights,
-                centers=kernel_weights_and_centers$centers[, 1]
-            )
-            loss_fn_args$obs <- cross_validation_examples$lead_obs[t_pred, ]
+            ## for each prediction target variable, compute loss
+            crossval_loss_by_prediction_target <- sapply(
+                seq_len(ncol(cross_validation_examples$lead_obs)),
+                function(prediction_target_ind) {
+                    ## update kernel centers to match prediction_target_ind
+                    kernel_weights_and_centers$centers <-
+                        cross_validation_examples$lead_obs[
+                            t_train, prediction_target_ind, drop=FALSE]
+                    
+                    ## calculate and return value of loss function based on prediction
+                    ## and realized value
+                    loss_fn_args <- ssr_control$loss_fn_args
+                    loss_fn_args$kernel_weights_and_centers <- list(
+                        weights=kernel_weights_and_centers$weights,
+                        centers=kernel_weights_and_centers$centers[, 1]
+                    )
+                    
+                    loss_fn_args$obs <- as.numeric(
+                        cross_validation_examples$lead_obs[
+                            t_pred, prediction_target_ind]
+                    )
+                    
+                    return(do.call(ssr_control$loss_fn_name, loss_fn_args))
+                })
             
-            return(do.call(ssr_control$loss_fn_name, loss_fn_args))
+            return(sum(crossval_loss_by_prediction_target))
         })
     
 #    browser()
@@ -714,8 +736,8 @@ ssr_predict <- function(ssr_fit,
 #'     additional rows to drop.  For example, if we are performing
 #'     cross-validation, we might want to drop all rows within +/- 52 indices of
 #'     the current prediction target.
-#' @param prediction_horizon an integer specifying the number of time steps
-#'     between the last observation and the prediction target.
+#' @param prediction_horizons an integer vector specifying the number of time
+#'     steps between the last observation and the prediction target.
 #' @param drop_trailing_rows boolean:  drop the last prediction_horizon rows?
 #'     These are the rows for which we can form lagged observation vectors, but
 #'     we cannot obtain a corresponding prediction target.
@@ -728,7 +750,7 @@ assemble_training_examples <- function(data,
     y_names,
     leading_rows_to_drop,
     additional_rows_to_drop,
-    prediction_horizon,
+    prediction_horizons,
     drop_trailing_rows=TRUE) {
     ## which rows should not be used as regression/density estimation examples
     ## either because the corresponding regression example cannot be formed
@@ -742,9 +764,10 @@ assemble_training_examples <- function(data,
     all_train_rows_to_drop <- c(all_train_rows_to_drop, additional_rows_to_drop)
     
     ## too late
+    max_prediction_horizon <- max(prediction_horizons)
     if(drop_trailing_rows) {
         all_train_rows_to_drop <- c(all_train_rows_to_drop,
-            seq(from=nrow(data) - prediction_horizon + 1,
+            seq(from=nrow(data) - max_prediction_horizon + 1,
                 to=nrow(data)))
     }
     
@@ -754,9 +777,20 @@ assemble_training_examples <- function(data,
         all_train_rows_to_drop)
     
     ## compute lead observation series for train data
-    train_lead_obs_inds <- seq(from=1, to=nrow(data)) + prediction_horizon
-    train_lead_obs <- data[train_lead_obs_inds, y_names, drop=FALSE]
+    train_lead_obs <- data.frame(rep(NA, nrow(data)))
+    for(y_name in y_names) {
+        for(prediction_horizon in prediction_horizons) {
+            train_lead_obs_inds <-
+                seq(from=1, to=nrow(data)) + prediction_horizon
+            component_name <- paste0(y_name, "_horizon", prediction_horizon)
+            train_lead_obs[[component_name]] <-
+                data[train_lead_obs_inds, y_name, drop=TRUE]
+        }
+    }
     train_lead_obs <- train_lead_obs[-all_train_rows_to_drop, , drop=FALSE]
+    
+    ## drop initial column of NA's
+    train_lead_obs <- train_lead_obs[, -1, drop=FALSE]
     
     return(list(lagged_obs=train_lagged_obs,
         lead_obs=train_lead_obs))
