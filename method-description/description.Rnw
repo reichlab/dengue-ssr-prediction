@@ -116,7 +116,7 @@ We denote the index of the variable in $\tilde{\bx}_t$ that we are predicting by
 Finally, it will be convenient to set
 \begin{align*}
 &\by_t^{(P)} = (F^{(1)} \tilde{x}_{t, d_{pred}}, \ldots, F^{(P)} \tilde{x}_{t, d_{pred}}) \text{ and} \\
-&\bx_t^{(\bl^{max})} = (\tilde{x}_{1,t}, \ldots, B^{(l^{max}_1)} \tilde{x}_{1, t}, \ldots, \tilde{x}_{D,t}, \ldots, B^{(l^{max}_D)} \tilde{x}_{D, t})
+&\bx_t^{(\bl^{max})} = (\tilde{x}_{t,1}, \ldots, B^{(l^{max}_1)} \tilde{x}_{t,1}, \ldots, \tilde{x}_{t,D}, \ldots, B^{(l^{max}_D)} \tilde{x}_{t,D})
 \end{align*}
 Here, $F^{(a)}$ is the forward shift operator defined by $F^{(a)} \tilde{x}_{t, d} = \tilde{x}_{t + a, d}$ and $B^{(a)}$ is the backward shift operator defined by $B^{(a)} \tilde{x}_{t, d} = \tilde{x}_{t - a, d}$.  The variable $\by_t^{(P)}$ represents the prediction target when our most recent observation was made at time $t$: the vector of counts for the following $P$ weeks.  The variable $\bx_t^{(\bl^{max})}$ represents the vector of all lagged covariates that are available for use in performing prediction.  We wish to estimate the distribution of $\by_t^{(P)} | \bx_t^{(\bl^{max})}$.
 
