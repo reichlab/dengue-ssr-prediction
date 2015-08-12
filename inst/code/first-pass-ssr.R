@@ -199,7 +199,7 @@ ssr_pt_ests <- rbind.fill(lapply(prediction_horizons_vec, function(prediction_ho
 
     rbind.fill(lapply(last_obs_season_week_and_prediction_horizon_combos,
         function(params) {
-            preds <- ssr_predict_dengue_one_week(
+            preds <- list(pt_preds = ssr_predict_dengue_one_week(
                 last_obs_season = params$last_obs_season,
                 last_obs_week = params$last_obs_week,
                 lags = list(smooth_log_cases = c(0, 1)),
@@ -212,7 +212,7 @@ ssr_pt_ests <- rbind.fill(lapply(prediction_horizons_vec, function(prediction_ho
                 X_names = c("smooth_log_cases"),
                 y_name = c("total_cases"),
                 time_name = "week_start_date",
-                prediction_types = "pt")$pt_preds
+                prediction_types = "pt")$pt_preds)
             preds$last_obs_season <- params$last_obs_season
             preds$last_obs_week <- params$last_obs_week
             last_obs_ind <- which(sj[["season"]] == params$last_obs_season &
@@ -226,13 +226,15 @@ ssr_pt_ests <- rbind.fill(lapply(prediction_horizons_vec, function(prediction_ho
             preds$prediction_week <- temp$week
             preds$prediction_horizon <- params$prediction_horizon
             
-            return(preds)
+#            browser()
+            return(as.data.frame(preds))
         }
     ))
 }))
 
 
 sj$season_season_week <- paste(as.character(sj$season), sj$season_week, sep = "-")
+ssr_pt_ests$pt_est <- ssr_pt_ests$pt_preds
 ssr_pt_ests$est_total_cases_orig_scale <- ssr_pt_ests$pt_est
 ssr_pt_ests$season_week <- ssr_pt_ests$prediction_week
 ssr_pt_ests$season <- ssr_pt_ests$prediction_season
