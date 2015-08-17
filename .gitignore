@@ -6,3 +6,8 @@
 
 data
 data-raw
+
+*.bbl
+*.log
+*.synctex.gz
+*concordance.tex

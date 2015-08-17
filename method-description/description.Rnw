@@ -1,59 +1,11 @@
 \documentclass[fleqn]{article}\usepackage[]{graphicx}\usepackage[]{color}
-%% maxwidth is the original width if it is less than linewidth
-%% otherwise use linewidth (to make sure the graphics do not exceed the margin)
-\makeatletter
-\def\maxwidth{ %
-  \ifdim\Gin@nat@width>\linewidth
-    \linewidth
-  \else
-    \Gin@nat@width
-  \fi
-}
-\makeatother
 
-\definecolor{fgcolor}{rgb}{0.345, 0.345, 0.345}
-\newcommand{\hlnum}[1]{\textcolor[rgb]{0.686,0.059,0.569}{#1}}%
-\newcommand{\hlstr}[1]{\textcolor[rgb]{0.192,0.494,0.8}{#1}}%
-\newcommand{\hlcom}[1]{\textcolor[rgb]{0.678,0.584,0.686}{\textit{#1}}}%
-\newcommand{\hlopt}[1]{\textcolor[rgb]{0,0,0}{#1}}%
-\newcommand{\hlstd}[1]{\textcolor[rgb]{0.345,0.345,0.345}{#1}}%
-\newcommand{\hlkwa}[1]{\textcolor[rgb]{0.161,0.373,0.58}{\textbf{#1}}}%
-\newcommand{\hlkwb}[1]{\textcolor[rgb]{0.69,0.353,0.396}{#1}}%
-\newcommand{\hlkwc}[1]{\textcolor[rgb]{0.333,0.667,0.333}{#1}}%
-\newcommand{\hlkwd}[1]{\textcolor[rgb]{0.737,0.353,0.396}{\textbf{#1}}}%
-
-\usepackage{framed}
-\makeatletter
-\newenvironment{kframe}{%
- \def\at@end@of@kframe{}%
- \ifinner\ifhmode%
-  \def\at@end@of@kframe{\end{minipage}}%
-  \begin{minipage}{\columnwidth}%
- \fi\fi%
- \def\FrameCommand##1{\hskip\@totalleftmargin \hskip-\fboxsep
- \colorbox{shadecolor}{##1}\hskip-\fboxsep
-     % There is no \\@totalrightmargin, so:
-     \hskip-\linewidth \hskip-\@totalleftmargin \hskip\columnwidth}%
- \MakeFramed {\advance\hsize-\width
-   \@totalleftmargin\z@ \linewidth\hsize
-   \@setminipage}}%
- {\par\unskip\endMakeFramed%
- \at@end@of@kframe}
-\makeatother
-
-\definecolor{shadecolor}{rgb}{.97, .97, .97}
-\definecolor{messagecolor}{rgb}{0, 0, 0}
-\definecolor{warningcolor}{rgb}{1, 0, 1}
-\definecolor{errorcolor}{rgb}{1, 0, 0}
-\newenvironment{knitrout}{}{} % an empty environment to be redefined in TeX
-
-\usepackage{alltt}\usepackage[]{graphicx}\usepackage[]{color}
-
+\usepackage[affil-it]{authblk}
 \usepackage{amssymb, amsmath, amsthm, amsfonts}
 %\usepackage{booktabs}
 %\usepackage{array}
 %\usepackage{paralist}
-%\usepackage{natbib}
+\usepackage{natbib}
 \usepackage{enumerate}
 \usepackage{float}
 \usepackage{subcaption}
@@ -62,20 +14,39 @@
 \newcommand{\norm}[1]{\vert\vert #1 \vert\vert}
 \newcommand{\ind}{\mathbb{I}}
 
-\title{Method Description for Dengue Prediction Challenge}
+\title{Methods Description for Dengue Prediction \\ Reich Lab Team}
 \date{}
-\author{Evan L. Ray (and anyone else)}
-\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+\author{Evan L. Ray, Krzysztof Sakrejda, Nicholas G. Reich\thanks{Email: \texttt{nick@schoolph.umass.edu}; Corresponding author} and Stephen A. Lauer}
+\affil{Department of Biostatistics and Epidemiology, University of Massachusetts -- Amherst, Amherst, MA}
+
 \begin{document}
 
+<<InitialBlock, echo = FALSE>>=
+opts_knit$set(concordance=TRUE)
+opts_chunk$set(echo=FALSE)
 
+suppressMessages(library(lubridate))
+
+suppressMessages(library(grid))
+suppressMessages(library(ggplot2))
+
+suppressMessages(library(plyr))
+suppressMessages(library(dplyr))
+suppressMessages(library(reshape))
+
+suppressMessages(library(ssr))
+@
 
 \maketitle
+
+\section{Agreement}
+
+By submitting these forecasts, we indicate our full and unconditional agreement to abide by the project's official rules and data use agreements.
 
 \section{Introduction}
 \label{sec:Intro}
 
-In this document, we describe the method we use for predicting Dengue fever incidence in the Presidential Competition.  Briefly, we employ a non-parametric approach to prediction in dynamical systems referred to as state space reconstruction (SSR).  Our implementation of SSR is similar in spirit to the simplex projection method of (CITE Sugihara and May, 1990); however, our approach is based on kernel regression and kernel density estimation.  We describe the general SSR approach used to obtain predictive densities for counts in a given week in Section \ref{sec:PredStage1}.  We then discuss post-processing used to obtain predictions for the target quantities in the challenge.
+In this document, we describe the method we use for predicting Dengue fever incidence in the Presidential Competition.  Briefly, we employ a non-parametric approach to prediction in dynamical systems referred to as state space reconstruction (SSR).  Our implementation of SSR is similar in spirit to the simplex projection method of \cite{sugihara1990nonlinearForecasting}; however, our approach is based on kernel regression and kernel density estimation (CITE CITE).  We describe the general SSR approach used to obtain predictive densities for counts in a given week in Section \ref{sec:PredStage1}.  We then discuss post-processing used to obtain predictions for the target quantities in the challenge.
 
 \section{State Space Reconstruction}
 \label{subsec:SSR:Motivation}
@@ -84,7 +55,7 @@ The spread of an infectious disease within a population is often represented as 
 
 A central challenge in the study of infectious disease is that we typically observe many fewer covariates than are important to the evolution of the process.  For example, even the most basic formulation of the SIR model involves the number of Susceptible and Infected individuals in the population at each time point.  Most infectious disease data sets include observations of the number of infected individuals in the population, but do not include measures of the number of susceptible individuals.  Furthermore, the SIR model is a very simplified representation of the evolution of the disease.  In reality, there are likely to be many other important factors affecting disease dynamics such as weather, immigration, and the presence of other diseases.  Many of these other factors may also be unobserved.
 
-SSR is an alternate, non-parametric aproach to learning about dynamical systems that can be applied when we are uncertain of the functional forms describing evolution of the process and we do not have observations of all of the state variables.  The method can be motivated by Takens' theorem (CITE), which establishes a connection between the original dynamical process and the process that is obtained by forming vectors of lagged observations.  Roughly, the theorem states that if the dynamical process satisfies certain conditions, there is a smooth, one-to-one and onto mapping with a smooth inverse between the limit sets of the original dynamical process and the limit sets of the lagged observation process. This provides some justification for studying the lagged observation process in order to learn about long-term dynamics of the system.  The theorem also tells us that we must include at least $2D + 1$ lags in the lagged observations in order for the limit sets to be equivalent, where $D$ is the number of states in the state space of the underlying dynamical process.
+SSR is an alternate, non-parametric aproach to learning about dynamical systems that can be applied when we are uncertain of the functional forms describing evolution of the process and we do not have observations of all of the state variables.  The method can be motivated by Takens' theorem \citep{takens1981detectingattractors}, which establishes a connection between the original dynamical process and the process that is obtained by forming vectors of lagged observations.  Roughly, the theorem states that if the dynamical process satisfies certain conditions, there is a smooth, one-to-one and onto mapping with a smooth inverse between the limit sets of the original dynamical process and the limit sets of the lagged observation process. This provides some justification for studying the lagged observation process in order to learn about long-term dynamics of the system.  The theorem also tells us that we must include at least $2D + 1$ lags in the lagged observations in order for the limit sets to be equivalent, where $D$ is the number of states in the state space of the underlying dynamical process.
 
 Although this theorem can help motivate the study of the lagged observation process, it does not answer two key questions for a practical implementation:
 \begin{enumerate}
@@ -97,28 +68,42 @@ For this challenge, we use a non-parametric approach based on kernel regression 
 \begin{figure}[t!]
 \centering
 \begin{subfigure}[t]{0.475\textwidth}
-\begin{knitrout}
-\definecolor{shadecolor}{rgb}{0.969, 0.969, 0.969}\color{fgcolor}
-\includegraphics[width=\maxwidth]{figure/SJPRWeeklyCaseCounts-1} 
+<<SJPRWeeklyCaseCounts, fig.height=3.5, fig.width=3.5>>=
+sj <- San_Juan_train
 
-\end{knitrout}
+p <- ggplot(sj[sj$season %in% c("1990/1991", "1991/1992", "1992/1993"), ],
+  aes(x=week_start_date, y=total_cases)) +
+  geom_line() +
+  xlab("Time") +
+  ylab("Total Weekly Cases") +
+  ggtitle("\nTotal Weekly Cases") +
+  theme_bw()
+print(p)
+@
 \caption{Total Weekly Cases over time}
 \end{subfigure}
 ~
 \begin{subfigure}[t]{0.475\textwidth}
-\begin{knitrout}
-\definecolor{shadecolor}{rgb}{0.969, 0.969, 0.969}\color{fgcolor}
-\includegraphics[width=\maxwidth]{figure/SJPRWeeklyCaseCounts2-1} 
+<<SJPRWeeklyCaseCounts2, fig.height=3.5, fig.width=3.5>>=
+sj <- sj %>% mutate(total_cases_lag1 = lag(total_cases))
 
-\end{knitrout}
+p <- ggplot(sj[sj$season %in% c("1990/1991", "1991/1992", "1992/1993") & !is.na(sj$total_cases_lag1), ],
+  aes(x=total_cases_lag1, y=total_cases, colour=season)) +
+  geom_path() +
+  xlab("Lagged Total Weekly Cases") +
+  ylab("Total Weekly Cases") +
+  ggtitle("Lagged Total Weekly Cases\nvs Total Weekly Cases") +
+  theme_bw()
+print(p)
+@
 \caption{Lagged Total Weekly Cases vs Total Weekly Cases}
 \end{subfigure}
 \caption{Total cases by week for San Juan, Puerto Rico.}
 \label{fig:SJPRWeeklyCaseCounts}
 \end{figure}
 
-\section{Method Statement}
-\label{sec:MethodStatement}
+\section{Model Description}
+\label{sec:ModelDescription}
 
 Suppose we observe $\tilde{\bx}_t = \{\tilde{x}_{t,1}, \ldots, \tilde{x}_{t,D}\} \in \mathbb{R}^D$ at each point in time $t = 1, \ldots, T$.  Our goal is to obtain a predictive distribution for one of the observed variables over a range of prediction horizons spanning the remainder of the current season using lagged observations of all of the variables.  In order to do this, we employ weighted kernel density estimation.
 
@@ -131,7 +116,7 @@ We denote the index of the variable in $\tilde{\bx}_t$ that we are predicting by
 Finally, it will be convenient to set
 \begin{align*}
 &\by_t^{(P)} = (F^{(1)} \tilde{x}_{t, d_{pred}}, \ldots, F^{(P)} \tilde{x}_{t, d_{pred}}) \text{ and} \\
-&\bx_t^{(\bl^{max})} = (\tilde{x}_{1,t}, \ldots, B^{(l^{max}_1)} \tilde{x}_{1, t}, \ldots, \tilde{x}_{D,t}, \ldots, B^{(l^{max}_D)} \tilde{x}_{D, t})
+&\bx_t^{(\bl^{max})} = (\tilde{x}_{t,1}, \ldots, B^{(l^{max}_1)} \tilde{x}_{t,1}, \ldots, \tilde{x}_{t,D}, \ldots, B^{(l^{max}_D)} \tilde{x}_{t,D})
 \end{align*}
 Here, $F^{(a)}$ is the forward shift operator defined by $F^{(a)} \tilde{x}_{t, d} = \tilde{x}_{t + a, d}$ and $B^{(a)}$ is the backward shift operator defined by $B^{(a)} \tilde{x}_{t, d} = \tilde{x}_{t - a, d}$.  The variable $\by_t^{(P)}$ represents the prediction target when our most recent observation was made at time $t$: the vector of counts for the following $P$ weeks.  The variable $\bx_t^{(\bl^{max})}$ represents the vector of all lagged covariates that are available for use in performing prediction.  We wish to estimate the distribution of $\by_t^{(P)} | \bx_t^{(\bl^{max})}$.
 
@@ -139,19 +124,19 @@ To make the notation concrete, suppose that $\tilde{\bx}_t$ contains the observe
 
 We obtain a predictive distribution for $\by_{t^*}^{(P)}$ at some particular time $t^*$ as follows:
 \begin{align}
-&\widehat{f}(\by_{t^*}^{(P)} | \bx_{t^*}) = \frac{1}{\vert \tau \vert} \sum_{t \in \tau} w_{t, t^*} K^{pred}(\by_t^{(P)}, \by_{t^*}^{(P)} ; H^{pred}) \text{, where} \label{eqn:PredLine1} \\
+&\widehat{f}(\by_{t^*}^{(P)} | \bx_{t^*}) = \sum_{t \in \tau} w_{t, t^*} K^{pred}(\by_t^{(P)}, \by_{t^*}^{(P)} ; H^{pred}) \text{, where} \label{eqn:PredLine1} \\
 &K^{pred}(\by_t^{(P)}, \by_{t^*}^{(P)} ; H^{pred}) = \prod_{p = 1}^P K^{pred}_p (F^{(p)} \tilde{x}_{t, d_{pred}}, F^{(p)} \tilde{x}_{t^*, d_{pred}} ; h^{pred}_p) \text{, } \label{eqn:PredLine2} \\
 &w_{t, t^*} = K^{wt}(\bx_t,  \bx_{t^*}, \bu ;  H^{wt} ) / \sum_{t' \in \tau} K^{wt}(\bx_{t'},  \bx_{t^*}, \bu ;  H^{wt} ) \text{, and} \label{eqn:PredLine3} \\
 &K^{wt}(\bx_t, \bx_{t^*} ; H^{wt}) = \prod_{d = 1}^D \prod_{l = 1}^{l^{max}_d} K^{wt}_{d,l} ( B^{(l)} \tilde{x}_{t, d}, B^{(l)} \tilde{x}_{t^*, d} ; h^{wt}_{d,l})^{u_{d,l}} \label{eqn:PredLine4}
 \end{align}
 
-In these expressions, the functions $K^{pred}(\cdot)$ and $K^{wt}(\cdot)$ are product kernel functions.  We discuss our choices for the functional forms of these kernel functions below.  $\tau$ is an index set of time points.  In most settings, we take $\tau = \{t: 1 + \max_d \bl^{max} \leq t \leq T - p\}$; these are the time points for which we can form the lagged observation vector $\bx_t^{(\bl^{max})}$ and the prediction target vector $\by_t^{(P)}$.  However, we will place additional restrictions on the time points included in $\tau$ in the cross-validation procedure discussed in Section \ref{sec:Estimation}.
+In these expressions, the functions $K^{pred}(\cdot)$ and $K^{wt}(\cdot)$ are product kernel functions.  We discuss our choices for the functional forms of these kernel functions below.  $\tau$ is an index set of time points.  In most settings, we take $\tau = \{t: 1 + \max_d \bl^{max} \leq t \leq T - P\}$; these are the time points for which we can form the lagged observation vector $\bx_t^{(\bl^{max})}$ and the prediction target vector $\by_t^{(P)}$.  However, we will place additional restrictions on the time points included in $\tau$ in the cross-validation procedure discussed in Section \ref{sec:Estimation}.
 
 Equations \eqref{eqn:PredLine1} through \eqref{eqn:PredLine4} can be intrepreted as follows.  The weighting kernel $K^{wt}(\bx_t, \bx_{t^*} ; H^{wt})$ is used to assign a weight to each time $t$ that reflects how similar the lagged observation vector formed at time $t$ is to the lagged observation vector formed at the time $t^*$.  If $\bx_t$ is similar to $\bx_{t^*}$, a large weight is assigned to $t$; if $\bx_t$ is different from $\bx_{t^*}$, a small weight is assigned to $t$.  These weights are then used to obtain a weighted kernel density estimate in Equation \eqref{eqn:PredLine1}, placing a kernel centered at $\by_t^{(P)}$ with the corresponding weight $w_{t, t^*}$.
 
 In general it would be possible to allow for some of the component kernel functions in $K^{wt}$ or $K^{pred}$ to incorporate multiple elements of $\bx_t$ or $\by_t$; however, in this work we consider univariate component kernels only.  As an example, if each $K^{wt}_c$ is a univariate squared exponential kernel function, then the combined $K^{wt}$ is a multivariate squared exponential kernel function with diagonal bandwidth matrix.  We will allow each component kernel function to have a different functional form.
 
-We have employed two kernel functions in our work.  We use the squared exponential kernel for most of the component kernel functions in both $K^{wt}$ and $K^{pred}$.  This function has the following form:
+We have employed two functional forms for the kernel functions in our work.  We use the squared exponential kernel for most of the component kernel functions in both $K^{wt}$ and $K^{pred}$.  This function has the following form:
 \begin{align*}
 &K(x, x^* ; h) \varpropto \exp\left\{ -\frac{1}{2} (\frac{x - x^*}{h})^2 \right\}
 \end{align*}
@@ -159,7 +144,7 @@ The constant of proportionality is irrelevant when the kernel is used as a compo
 
 The second kernel we have employed in the weighting kernel $K^{wt}$ is the periodic kernel, which is commonly used in the Gaussian Processes literature.  This kernel is defined as follows:
 \begin{align*}
-&K(x, x^* ; h) \varpropto \exp\left\{ -\frac{1}{2} sin^2(\rho \frac{x - x^*}{h}) \right\}
+&K(x, x^* ; h) \varpropto \exp\left\{ -\frac{1}{2} sin^2\left(\rho \frac{x - x^*}{h}\right) \right\}
 \end{align*}
 The parameter $\rho$ determines the period of the kernel function.  In our work, we have fixed $\rho$ so that the kernel has a period of 1 year and estimated only the bandwidth $h$.  We have employed the periodic kernel only for the component of the weighting kernel corresponding to the time index variable.  Effectively, this means that observations are scored as being similar to each other if they were recorded at a similar time of the year.
 
@@ -170,10 +155,47 @@ Another alternative that we pursue is the use of smoothed observations in formin
 \section{Parameter Estimation}
 \label{sec:Estimation}
 
+We use cross-validation in order to select the variables that are used in the model and estimate the corresponding bandwidth parameters by (approximately) minimizing a cross-validation estimate of the mean absolute error (MAE) of the point predictions obtained from the model.  Formally,
+\begin{align*}
+&(\widehat{\bu}, \widehat{H}^{wt}) \approx \argmin{(\bu, H^{wt})} MAE(\bu, H^{wt}) \\
+&\qquad = \argmin{(\bu, H^{wt})} \frac{1}{P \cdot (1 + \max_d \bl^{max})} \sum_{p = 1}^{P} \sum_{t^* = 1 + \max_d \bl^{max}}^{T - P} \vert \widehat{y}_{t^*}^{(p)} - y_{t^*}^{(p)} \vert
+\end{align*}
+The approximation is due to the fact that our optimization procedures may not find a global minimum.
 
+We use a forward/backward stagewise procedure to obtain the set of combinations of variables and lags that are included in the final model (represented by $\bu$).  For each candidate model, we use the limited memory box constrained optimization procedure of \cite{byrd1995limitedmemoryoptim} to estimate the bandwidth parameters.
+
+In order to obtain the point estimate $\widehat{y}_{t^*}^{(p)}$ for each time point $t^*$ and number of steps ahead $p$, we first form the predictive density as in Equations \eqref{eqn:PredLine1} through \eqref{eqn:PredLine4}.  In order to reduce the potential for our parameter estimates to be affected by local correlation in the time series, we eliminate all time points that fall within one year of $t^*$ from the index set $\tau$; we refer to this timepoint-specific index set as $\tau^*$.  We then take our point estimate to be the expected value of this estimated predictive distribution:
+\begin{align*}
+&\widehat{\by}_{t^*}^{(P)} = \mathbb{E} \left[ \sum_{t \in \tau^*} w_{t, t^*} K^{pred}(\by_t^{(P)}, \by_{t^*}^{(P)} ; H^{pred}) \right] \\
+&\qquad = \sum_{t \in \tau^*} w_{t, t^*} \mathbb{E} \left[ K^{pred}(\by_t^{(P)}, \by_{t^*}^{(P)} ; H^{pred}) \right] \\
+&\qquad = \sum_{t \in \tau^*} w_{t, t^*} \by_t^{(P)}
+\end{align*}
+Note that for symmetric prediction kernels, this point estimate does not depend on the bandwidth parameters $H^{pred}$.
+
+For the prediction kernels, we estimated the bandwidth parameters using the methods of \cite{sheather1991KDEbw}, as implemented in \texttt{R}'s \texttt{bw.SJ} function.  We estimate the bandwidth parameter for each prediction horizon $p \in \{1, \ldots, P\}$ separately.
 
 \section{Predictions for Challenge}
 \label{sec:PredictionsForChallenge}
 
+
+
+\section{Variables}
+\label{sec:Variables}
+
+
+
+\section{Computational Resources}
+\label{sec:ComputationalResources}
+
+We implemented our variation on SSR in the \texttt{R} statistical programming language \citep{RCore}.
+
+\section{Publications}
+\label{sec:Publications}
+
+\begingroup
+\renewcommand{\section}[2]{}
+\bibliographystyle{plainnat}
+\bibliography{SSRbib}
+\endgroup
 
 \end{document}

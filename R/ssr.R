@@ -198,7 +198,7 @@ ssr <- function(X_names,
         ssr_control) {
     ## get/validate ssr_control argument
     if(missing(ssr_control)) {
-        ssr_control <- ssr_control_default(X_names, y_names, time_name, data)
+        ssr_control <- create_ssr_control_default(X_names, y_names, time_name, data)
         warning("ssr_control argument not supplied to ssr -- using defaults, which may be bad")
     } else {
         validate_ssr_control(ssr_control, X_names, y_names, time_name, data)
@@ -252,18 +252,18 @@ est_ssr_params_stepwise_crossval <- function(data, ssr_control) {
         ## corresponding parameter estimates
         
         ## commented out use of foreach for debugging purposes
-        crossval_results <- foreach(i=seq_along(all_lags_as_list),
-            .packages=c("ssr", ssr_control$par_packages),
-            .combine="c") %dopar% {
-#        crossval_results <- lapply(seq_along(all_lags_as_list), function(i) {
+#        crossval_results <- foreach(i=seq_along(all_lags_as_list),
+#            .packages=c("ssr", ssr_control$par_packages),
+#            .combine="c") %dopar% {
+        crossval_results <- lapply(seq_along(all_lags_as_list), function(i) {
             if(length(selected_var_lag_ind) > 0 && i == selected_var_lag_ind) {
-                list(
+#                list(
                     list(loss=crossval_prediction_loss,
                         lags=lags_hat,
                         theta=theta_hat)
-                )
+#                )
             } else {
-               list( # put results in a list so that combine="c" is useful
+#               list( # put results in a list so that combine="c" is useful
                     est_ssr_params_stepwise_crossval_one_potential_step(
                         prev_lags=lags_hat,
                         prev_theta=theta_hat,
@@ -271,10 +271,10 @@ est_ssr_params_stepwise_crossval <- function(data, ssr_control) {
                         update_lag_value=all_lags_as_list[[i]]$lag_value,
                         data=data,
                         ssr_control=ssr_control)
-                )
+#                )
             }
-        }
-#        })
+#        }
+        })
         
         ## pull out loss achieved by each model, find the best value
         loss_achieved <- sapply(crossval_results, function(component) {
@@ -390,7 +390,7 @@ est_ssr_params_stepwise_crossval_one_potential_step <- function(prev_lags,
         data=data,
         ssr_control=ssr_control,
         method="L-BFGS-B",
-        #		lower=-10000,
+        lower=-50,
         #		upper=10000,
         #control=list(),
         hessian=FALSE)
@@ -522,8 +522,13 @@ ssr_crossval_estimate_parameter_loss <- function(theta_vector,
         })
     
 #    browser()
-    
-    return(sum(crossval_loss_by_time_ind))
+    if(any(is.na(crossval_loss_by_time_ind))) {
+        ## parameters resulted in numerical instability
+        ## return largest non-infinite value
+        return(.Machine$double.xmax)
+    } else {
+        return(sum(crossval_loss_by_time_ind))
+    }
 }
 
 #' Get initial parameter values in list form for the given kernel function
@@ -717,7 +722,7 @@ ssr_predict <- function(ssr_fit,
         training_examples$lead_obs,
         prediction_examples$lagged_obs,
         ssr_fit,
-        prediction_horizon)
+        normalize_weights)
 }
 
 #' Construct data frame of lagged observation vectors and data frame of
@@ -881,7 +886,14 @@ ssr_predict_given_lagged_obs <- function(train_lagged_obs,
 #' 
 #' @return normalized log_weights so that sum(exp(log_weights)) = 1
 compute_normalized_log_weights <- function(log_weights) {
+    ## normalize
     norm_const <- logspace_sum_matrix_rows(matrix(log_weights, nrow = 1))
+    log_weights <- log_weights - norm_const
+    
+    ## normalize again -- if the initial log_weights were "extreme", the norm_const
+    ## computed above may be approximate.
+    norm_const <- logspace_sum_matrix_rows(matrix(log_weights, nrow = 1))
+    
     return(log_weights - norm_const)
 }
 
@@ -916,7 +928,8 @@ compute_kernel_values <- function(train_lagged_obs,
             col_name <- paste0(vname, "_lag", lag_val)
             
             ## assemble arguments to kernel function
-            kernel_fn_args <- theta[[col_name]]
+            kernel_fn_args <- c(theta[[col_name]],
+                ssr_control$theta_fixed[[vname]])
             kernel_fn_args$x <- train_lagged_obs[[col_name]]
             kernel_fn_args$center <- prediction_lagged_obs[[col_name]]
             kernel_fn_args$log <- TRUE
@@ -977,7 +990,9 @@ compute_lagged_obs_vecs <- function(data,
     })
     
     ## drop specified rows
-    result <- result[-rows_to_drop, , drop=FALSE]
+    if(length(rows_to_drop) > 0) {
+        result <- result[-rows_to_drop, , drop=FALSE]
+    }
     
     return(result)
 }
@@ -1098,7 +1113,7 @@ ssr_predict_dengue_one_week <- function(last_obs_season,
     
     ## do prediction
     ssr_predictions <- ssr_predict(
-        ssr_fit=list(ssr_control=ssr_control_default(X_names, y_names, time_name, data),
+        ssr_fit=list(ssr_control=create_ssr_control_default(X_names, y_names, time_name, data),
             X_names=X_names,
             y_names=y_names,
             time_name=time_name,
@@ -1128,7 +1143,7 @@ ssr_predict_dengue_one_week <- function(last_obs_season,
 ## a function to get point predictions for one week
 get_pt_predictions_one_week <- function(ssr_predictions) {
     # get weighted mean
-    pt_est <- weighted.mean(ssr_predictions$centers,
+    pt_est <- weighted.mean(ssr_predictions$centers[, 1],
         ssr_predictions$weights)
 
     return(pt_est)
@@ -1137,7 +1152,7 @@ get_pt_predictions_one_week <- function(ssr_predictions) {
 ## a function to get kde predictions for one week
 get_dist_predictions_one_week <- function(ssr_predictions) {
     ## do weighted kde
-    kde_est <- density(ssr_predictions$centers,
+    kde_est <- density(ssr_predictions$centers[, 1],
         weights = ssr_predictions$weights,
         bw = "SJ")
 
