@@ -22,9 +22,9 @@
 \onehalfspacing
 
 
-\title{Methods Description for Dengue Prediction \\ Reich Lab Team}
+\title{Methods Description for Dengue Prediction \\ Team: A Kernel of Truth}
 \date{}
-\author{Evan L. Ray\thanks{Email: \texttt{elray@umass.edu}; Corresponding author}, Krzysztof Sakrejda, Stephen A. Lauer, Xi Meng, Nicholas G. Reich}
+\author{Evan L. Ray\thanks{Email: \texttt{elray@umass.edu}; Corresponding author}, Krzysztof Sakrejda, Alexandria C. Brown, Xi Meng}
 \affil{Department of Biostatistics and Epidemiology, \\ University of Massachusetts -- Amherst, Amherst, MA}
 
 \begin{document}
@@ -157,7 +157,9 @@ In theory, the predictive distributions for $\by_{t^*}^{(P)}$ obtained through t
 
 There are several details specific to our application of the SSR method to the Dengue challenge data which we now discuss.  First, rather than directly using the observed weekly case counts in forming the weights, we transform them to a log scale and smooth them using the LOESS method as implemented by \texttt{R}'s \texttt{loess} function.  Due to time constraints, we have fixed the smoothing parameter at $12 / T$.  Ideally, we would estimate the smoothing parameter as a part of the model fitting process; we plan to explore this further in future work.
 
-For the purpose of this competition, for prediction in a given location we have used the smoothed log-scale counts from that location, lag-1 smoothed log-scale counts from that location and the time index in calculating the observation weights.  We fit a separate component model for each possible prediction horizon $P \in \{4, 8, \ldots, 52\}$, corresponding to the number of weeks remaining in the season at the times when predictions are made.  The variables selected for inclusion in each of these component models are summarized in Table~\ref{tbl:VariablesUsedSanJuan} and Table~\ref{tbl:VariablesUsedIquitos}
+For the purpose of this competition, for prediction in a given location we have used the smoothed log-scale counts from that location, lag-1 smoothed log-scale counts from that location and the time index in calculating the observation weights.  We fit a separate component model for each possible prediction horizon $P \in \{4, 8, \ldots, 52\}$, corresponding to the number of weeks remaining in the season at the times when predictions are made.  The variables selected for inclusion in each of these component models are summarized in Table~\ref{tbl:VariablesUsedSanJuan} and Table~\ref{tbl:VariablesUsedIquitos}.
+
+We note that for the competition, we have estimated the variables and lags to use as well as the bandwidth parameters using a cross-validation procedure based on the training data.  These estimates will not be updated when the testing data are supplied.  However, when the testing data are made available, we will have more data points available to use as centers of weighted prediction kernels, including the observations at all time points up to the week we are predicting from.
 
 \begin{table}[!p]
 \centering
