@@ -5,16 +5,24 @@ make_competition_forecasts_by_trajectory <- function(
     n_sims,
     data,
     outfile_path,
-    location) {
+    location,
+    phase="train") {
     
     ## make a data frame with seasons and weeks at which we make predictions
     
     ## values used by competition organizers -- I think week 0 means week 52
     ## of the previous season.
-    last_obs_seasons <- c("2005/2006",
-        "2006/2007",
-        "2007/2008",
-        "2008/2009")
+    if(identical(phase, "train")) {
+        last_obs_seasons <- c("2005/2006",
+            "2006/2007",
+            "2007/2008",
+            "2008/2009")
+    } else {
+        last_obs_seasons <- c("2009/2010",
+            "2010/2011",
+            "2011/2012",
+            "2012/2013")
+    }
     
     last_obs_weeks <- seq(from = 0, to = 48, by = 4)
     
@@ -141,18 +149,46 @@ make_competition_forecasts_by_trajectory <- function(
                     from=last_obs_week_ind - max_lag,
                     to=last_obs_week_ind)
                 
-                ## drop indices that are within 1 year of the last observed week or
-                ## within the last (prediction_horizon = 52 - last_obs_week_ind0)
-                ## weeks of the end of the data
-                training_data_inds_to_drop <- c(
-                    seq(from=last_obs_week_ind - 52,
-                        to=last_obs_week_ind + 52),
-                    seq(from=nrow(data) - (52 - last_obs_week_ind0),
-                        to=nrow(data)))
-                training_data_inds_to_drop <- training_data_inds_to_drop[
-                    training_data_inds_to_drop >= 1 &
-                        training_data_inds_to_drop <= nrow(data)
-                    ]
+                if(identical(phase, "train")) {
+                    ## in the training phase, forecasts use all the data not within
+                    ## +/- 1 year of the last observed week as regression examples.
+                    ## drop indices that are within 1 year of the last observed week or
+                    ## within the last (prediction_horizon = 52 - last_obs_week_ind0)
+                    ## weeks of the end of the data
+                    training_data_inds_to_drop <- c(
+                        seq(from=last_obs_week_ind - 52,
+                            to=last_obs_week_ind + 52),
+                        seq(from=nrow(data) - (52 - last_obs_week_ind0),
+                            to=nrow(data)))
+                    training_data_inds_to_drop <- training_data_inds_to_drop[
+                        training_data_inds_to_drop >= 1 &
+                            training_data_inds_to_drop <= nrow(data)
+                        ]
+                } else {
+                    ## in the testing phase, we need to update the ssr_fit with
+                    ## additional regression examples that are available in the new
+                    ## data that occur before the last observed week.
+                    ## we compute the data smooths here so that data after the last
+                    ## observed week are not used.
+                    ## note that the fit parameter estimates are not updated.
+                    training_data_inds_to_drop <- c()
+                    
+                    train_data <- data[seq_len(last_obs_week_ind), , drop=FALSE]
+                    
+                    ## add log column
+                    train_data$log_total_cases <- log(train_data$total_cases + 1)
+                    
+                    ## add smooth log column
+                    sm <- loess(log_total_cases ~ as.numeric(week_start_date),
+                        data=train_data,
+                        span=12 / nrow(train_data))
+                    train_data$smooth_log_cases <- sm$fitted
+                    
+                    data$smooth_log_cases <- NA
+                    data$smooth_log_cases[seq_len(last_obs_week_ind)] <- sm$fitted
+                    
+                    ssr_fit$train_data <- train_data
+                }
                 
                 ## get kernel weights and centers for prediction in the given
                 ## week
@@ -196,14 +232,24 @@ make_competition_forecasts_by_trajectory <- function(
     
     ## save results data frames
     peak_incidence_results_for_output <- format(peak_incidence_results, digits=15)
-    write.csv(peak_incidence_results_for_output[-(1:4), ],
-        file=file.path(outfile_path, paste0("reich-lab-peakinc_", location, ".csv")))
     peak_week_results_for_output <- format(peak_week_results, digits=15)
-    write.csv(peak_week_results_for_output[-(1:4), ],
-        file=file.path(outfile_path, paste0("reich-lab-peakweek_", location, ".csv")))
     season_incidence_results_for_output <- format(season_incidence_results, digits=15)
-    write.csv(season_incidence_results_for_output[-(1:4), ],
-        file=file.path(outfile_path, paste0("reich-lab-seasoninc_", location, ".csv")))
+    
+    if(identical(phase, "train")) {
+        write.csv(peak_incidence_results_for_output[-(1:4), ],
+            file=file.path(outfile_path, paste0("kerneloftruth_peakinc_", location, ".csv")))
+        write.csv(peak_week_results_for_output[-(1:4), ],
+            file=file.path(outfile_path, paste0("kerneloftruth_peakweek_", location, ".csv")))
+        write.csv(season_incidence_results_for_output[-(1:4), ],
+            file=file.path(outfile_path, paste0("kerneloftruth_seasoninc_", location, ".csv")))
+    } else {
+        write.csv(peak_incidence_results_for_output[-(1:4), ],
+            file=file.path(outfile_path, paste0("kerneloftruth_peakinc_", location, "_test.csv")))
+        write.csv(peak_week_results_for_output[-(1:4), ],
+            file=file.path(outfile_path, paste0("kerneloftruth_peakweek_", location, "_test.csv")))
+        write.csv(season_incidence_results_for_output[-(1:4), ],
+            file=file.path(outfile_path, paste0("kerneloftruth_seasoninc_", location, "_test.csv")))
+    }
 }
 
 make_competition_forecasts_one_season_week <- function(weekly_fits,
