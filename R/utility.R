@@ -10,6 +10,11 @@ logspace_add <- function(logx, logy) {
 	return(.Call("logspace_add_C", as.numeric(logx), as.numeric(logy)))
 }
 
+logspace_sum <- function(logx) {
+    dim(logx) <- c(1, length(logx))
+    return(logspace_sum_matrix_rows(logx))
+}
+
 logspace_sum_matrix_rows <- function(logX) {
 	return(.Call("logspace_sum_matrix_rows_C", as.numeric(logX), as.integer(nrow(logX)), as.integer(ncol(logX))))
 }
