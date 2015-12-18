@@ -1,26 +1,3 @@
-#' Squared exponential kernel function
-#' 
-#' @param x a vector of values at which to evaluate the kernel function
-#' @param center a real number, center point for the kernel function
-#' @param bw kernel bandwidth
-#' @param return log scale value?
-#' 
-#' @return vector of the kernel function value at each point in x
-squared_exp_kernel <- function(x, center, bw, log) {
-    if(!is.numeric(center) | length(center) != 1) {
-        stop("center must be numeric with length 1")
-    }
-    
-    result <- -0.5 * ((x - center) / bw)^2
-    
-    if(log) {
-        return(result)
-    } else {
-        return(exp(result))
-    }
-}
-
-
 #' Periodic kernel function
 #' 
 #' @param x a vector of values at which to evaluate the kernel function
@@ -39,40 +16,32 @@ periodic_kernel <- function(x, center, period, bw, log) {
     }
 }
 
-#' Compute the parameters bw, bw_continuous, conditional_bw_discrete, and
-#' conditional_center_discrete_offset_multiplier for the pdtmvn_kernel function
-#' from the eigen-decomposition of the bandwidth matrix.
+#' Create two integer vectors with indices of columns in x corresponding to
+#' continuous variables and discrete variables.  These integer vectors are
+#' suitable for passing to functions from the pdtmvn function.
 #' 
-#' @param bw_evecs matrix whose columns are the eigenvectors of the bandwidth
-#'     matrix.
-#' @param bw_evals vector of eigenvalues of the bandwidth matrix.
-#' @param continuous_vars Vector containing column indices for continuous
-#'     variables.
-#' @param discrete_vars Vector containing column indices for discrete variables.
+#' @param x_colnames character vector with column names of x
+#' @param continuous_vars character vector with names of columns in x that
+#'     should be treated as continuous variables
+#' @param discrete_vars character vector with names of columns in x that
+#'     should be treated as discrete variables
 #' 
-#' @return Named list with four components: bw, bw_continuous,
-#'     conditional_bw_discrete, and conditional_center_discrete_offset_multiplier
-compute_pdtmvn_kernel_bw_params_from_bw_eigen <- function(bw_evecs,
-    bw_evals,
-    continuous_vars,
-    discrete_vars) {
-    
-    bw <- bw_evecs %*% diag(bw_evals) %*% t(bw_evecs)
-    
-    bw_params <- c(list(bw = sigma),
-        compute_sigma_subcomponents(sigma = bw,
-            continuous_vars = continuous_vars,
-            discrete_vars = discrete_vars,
-            validate_level = 0)
-    )
-    
-    names(bw_params)[names(bw_params) == "sigma_continuous"] <- "bw_continuous"
-    names(bw_params)[names(bw_params) == "conditional_sigma_discrete"] <- 
-        "conditional_bw_discrete"
-    names(bw_params)[names(bw_params) == "conditional_mean_discrete_offset_multiplier"] <- 
-        "conditional_center_discrete_offset_multiplier"
-    
-    return(bw_params)
+#' @return list with two components: continuous_vars is an integer vector of
+#'     columns in x corresponding to continuous variables and discrete_vars is
+#'     an integer vector of columns in x corresponding to discrete variables
+get_int_continuous_discrete_vars_used <- function(x_colnames,
+		continuous_vars,
+		discrete_vars) {
+	if(is.null(x_colnames)) {
+		stop("x must have column names")
+	}
+	int_continuous_vars <- seq_along(x_colnames)[x_colnames %in% continuous_vars]
+	int_discrete_vars <- seq_along(x_colnames)[x_colnames %in% discrete_vars]
+	
+	return(list(
+		continuous_vars = int_continuous_vars,
+		discrete_vars = int_discrete_vars
+	))
 }
 
 #' Evaluate the kernel function given by the pdtmvn distribution.
@@ -107,38 +76,76 @@ compute_pdtmvn_kernel_bw_params_from_bw_eigen <- function(bw_evecs,
 #' @return the value of the kernel function given by the pdtmvn distribution
 #'     at x.
 pdtmvn_kernel <- function(x,
-    center,
-    bw,
-    bw_continuous,
-    conditional_bw_discrete,
-    conditional_center_discrete_offset_multiplier,
+		center,
+		bw,
+		bw_continuous,
+		conditional_bw_discrete,
+		conditional_center_discrete_offset_multiplier,
+		continuous_vars,
+		discrete_vars,
+		discrete_var_range_functions,
+		lower,
+		upper,
+		log) {
+	int_continuous_discrete_vars <-
+		get_int_continuous_discrete_vars_used(colnames(x),
+			continuous_vars,
+			discrete_vars)
+	
+	return(dpdtmvn(x = x,
+		mean = center,
+		sigma = bw,
+		sigma_continuous = bw_continuous,
+		conditional_sigma_discrete = conditional_bw_discrete,
+		conditional_mean_discrete_offset_multiplier = 
+			conditional_center_discrete_offset_multiplier,
+		lower = lower,
+		upper = upper,
+		continuous_vars = int_continuous_discrete_vars$continuous_vars,
+		discrete_vars = int_continuous_discrete_vars$discrete_vars,
+		discrete_var_range_functions = discrete_var_range_functions[discrete_vars],
+		log = log,
+		validate_level = 1))
+}
+
+#' Compute the parameters bw, bw_continuous, conditional_bw_discrete, and
+#' conditional_center_discrete_offset_multiplier for the pdtmvn_kernel function
+#' from the eigen-decomposition of the bandwidth matrix.
+#' 
+#' @param bw_evecs matrix whose columns are the eigenvectors of the bandwidth
+#'     matrix.
+#' @param bw_evals vector of eigenvalues of the bandwidth matrix.
+#' @param continuous_vars Vector containing column indices for continuous
+#'     variables.
+#' @param discrete_vars Vector containing column indices for discrete variables.
+#' 
+#' @return Named list with four components: bw, bw_continuous,
+#'     conditional_bw_discrete, and conditional_center_discrete_offset_multiplier
+compute_pdtmvn_kernel_bw_params_from_bw_eigen <- function(bw_evecs,
+    bw_evals,
     continuous_vars,
-    discrete_vars,
-    discrete_var_range_functions,
-    lower,
-    upper,
-    log) {
-    vars_used <- colnames(x)
-    if(is.null(vars_used)) {
-        stop("x must have column names")
-    }
-    continuous_vars_used <- vars_used[vars_used %in% continuous_vars]
-    discrete_vars_used <- vars_used[vars_used %in% discrete_vars]
+    discrete_vars) {
+	int_continuous_discrete_vars <-
+		get_int_continuous_discrete_vars_used(colnames(x),
+			continuous_vars,
+			discrete_vars)
+	
+    bw <- bw_evecs %*% diag(bw_evals) %*% t(bw_evecs)
     
-    return(dpdtmvn(x = x,
-        mean = center,
-        sigma = bw,
-        sigma_continuous = bw_continuous,
-        conditional_sigma_discrete = conditional_bw_discrete,
-        conditional_mean_discrete_offset_multiplier = 
-            conditional_center_discrete_offset_multiplier,
-        lower = lower,
-        upper = upper,
-        continuous_vars = continuous_vars_used,
-        discrete_vars = discrete_vars_used,
-        discrete_var_range_functions = discrete_var_range_functions,
-        log = TRUE,
-        validate_level = 1))
+    bw_params <- c(list(bw = bw),
+        pdtmvn::compute_sigma_subcomponents(sigma = bw,
+            continuous_vars = int_continuous_discrete_vars$continuous_vars,
+            discrete_vars = int_continuous_discrete_vars$discrete_vars,
+            validate_level = 0)
+    )
+    
+    names(bw_params)[names(bw_params) == "sigma_continuous"] <- "bw_continuous"
+    names(bw_params)[names(bw_params) == "conditional_sigma_discrete"] <- 
+        "conditional_bw_discrete"
+    names(bw_params)[names(bw_params) == "conditional_mean_discrete_offset_multiplier"] <- 
+        "conditional_center_discrete_offset_multiplier"
+    
+    return(bw_params)
 }
 
 #' A function to vectorize the parameters of the pdtmvn_kernel and convert
@@ -167,7 +174,13 @@ vectorize_params_pdtmvn_kernel <- function(theta_list, parameterization, ssr_con
 #'     "bw-diagonalized-est-eigenvalues"
 #' @param bw_evecs square matrix with eigenvectors of the bandwidth matrix in
 #'     columns
-#' @param 
+#' @param continuous_vars character vector with variables names that are to be
+#'     treated as continuous
+#' @param discrete_vars character vector with variables names that are to be
+#'     treated as discrete
+#' @param ssr_control list of control parameters to ssr
+#' 
+#' @return list of parameters to pdtmvn_kernel
 unvectorize_params_pdtmvn_kernel <- function(theta_vector, parameterization, bw_evecs, continuous_vars, discrete_vars, ssr_control) {
 	if(identical(parameterization, "bw-diagonalized-est-eigenvalues")) {
 		num_bw_evals <- ncol(bw_evecs)
@@ -184,21 +197,34 @@ unvectorize_params_pdtmvn_kernel <- function(theta_vector, parameterization, bw_
 	}
 }
 
-
+#' Get initial parameter values for the pdtmvn_kernel
+#' 
+#' @param parameterization Character vector of length 1; the parameterization to
+#'     use.  Currently, the only supported option is
+#'     "bw-diagonalized-est-eigenvalues"
+#' @param x a matrix of values used to initialize the parameter values for the
+#'     kernel function.  Each row is an observation, each column is an
+#'     observed variable.
+#' @param continuous_vars character vector with variables names that are to be
+#'     treated as continuous
+#' @param discrete_vars character vector with variables names that are to be
+#'     treated as discrete
+#' @param ssr_control list of control parameters to ssr
+#' @param ... used to absorb other arguments in the function call
+#' 
+#' @return list with initial values of parameters to the pdtmvn_kernel
 initialize_params_pdtmvn_kernel <- function(parameterization,
 	x,
-	update_var_name,
-	update_lag_value,
-	prev_theta,
 	continuous_vars,
 	discrete_vars,
-	ssr_control) {
-	require("robust")
+	ssr_control,
+	...) {
+	require(robust)
 	
 	if(identical(parameterization, "bw-diagonalized-est-eigenvalues")) {
-		sample_cov_hat <- covRob(x)$cov
+		sample_cov_hat <- robust::covRob(x)$cov
 		sample_cov_eigen <- eigen(sample_cov_hat)
-		num_bw_evals <- ncol(bw_evecs)
+		
 		return(c(
 			compute_pdtmvn_kernel_bw_params_from_bw_eigen(sample_cov_eigen$vectors,
 			    bw_evals = sample_cov_eigen$values,
@@ -209,7 +235,6 @@ initialize_params_pdtmvn_kernel <- function(parameterization,
 				bw_evals = sample_cov_eigen$values,
 				log_bw_evals = log(sample_cov_eigen$values)),
 			ssr_control
-			
 		))
 	} else {
 		stop("Invalid parameterization for pdtmvn kernel function")

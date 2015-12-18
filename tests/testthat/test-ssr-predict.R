@@ -8,118 +8,39 @@ library(dplyr)
 ##   leading I means implicitly tested by another test
 ##   leading S means simple enough that no test is required
 ##   no leading character means test needs to be written still
-# S "assemble_prediction_examples"                       
-# X "assemble_training_examples"                         
-# X "compute_kernel_values"                              
-# X "compute_lagged_obs_vecs"                            
-# X "compute_normalized_log_weights"                     
-# S "create_ssr_control"                                 
-# S "create_ssr_control_default"                         
-#   "discrete_kernel"                                    
-#   "est_ssr_params_stepwise_crossval"                   
-#   "est_ssr_params_stepwise_crossval_one_potential_step"
-# S "get_default_kernel_fns"                             
-#   "get_dist_predictions_one_week"                      
-# S "get_inds_smallest_k"                                
-# X "get_kernel_fn_init_params"                          
-#   "get_prediction_season_week"                         
-#   "get_pt_predictions_one_week"                        
-# S "periodic_kernel"                                    
-# S "squared_exp_kernel"                                 
-#   "ssr"                                                
-#   "ssr_crossval_estimate_parameter_loss"               
-#   "ssr_predict"                                        
-#   "ssr_predict_dengue_one_week"                        
-#   "ssr_predict_given_lagged_obs"                       
-# X "unvectorize_theta"                                  
-# I "unvectorize_theta_one_kernel_fn"                    
-#   "validate_ssr_control"                               
-# S "vectorize_theta"
+# S assemble_prediction_examples                       
+# X assemble_training_examples                         
+# X compute_kernel_values                              
+# X compute_lagged_obs_vecs                            
+# X compute_normalized_log_weights                     
+# S create_ssr_control                                 
+# S create_ssr_control_default                         
+#   est_ssr_params_stepwise_crossval                   
+#   est_ssr_params_stepwise_crossval_one_potential_step
+#   extract_vectorized_theta_est_from_theta
+#   get_default_kernel_fns                             
+#   get_dist_predictions_one_week                      
+# S get_inds_smallest_k                                
+#   get_prediction_season_week                         
+#   get_pt_predictions_one_week                        
+#   initialize_theta
+#   mae_from_kernel_weights_and_centers
+#   mase_from_kernel_weights_and_centers
+#   ssr                                                
+#   ssr_crossval_estimate_parameter_loss               
+#   ssr_dist_predict_given_lagged_lead_obs
+#   ssr_kernel_centers_and_weights_predict_given_lagged_obs
+#   ssr_point_predict_given_lagged_obs
+#   ssr_predict                                        
+#   ssr_predict_dengue_one_week                        
+#   ssr_predict_given_lagged_obs                       
+#   update_lags
+#   update_theta_from_vectorized_theta_est
+#   validate_ssr_control                               
 
 
 
 context("ssr prediction functions")
-
-test_that("get_kernel_fn_init_params works", {
-    expected <- list(bw=1, period=1)
-    
-    actual <- get_kernel_fn_init_params("b",
-        ssr_control=list(theta_est=list(a="bw", b=c("bw", "period"))))
-    
-    expect_identical(actual, expected)
-})
-
-test_that("unvectorize_theta works, no fixed params", {
-    theta <- list(a_lag1=list(bw=1),
-        a_lag5=list(bw=15),
-        b_lag0=list(bw=3,
-            period=12),
-        b_lag2=list(bw=2,
-            period=987))
-    
-    lags <- list(a=c(1, 5),
-        b=c(0, 2))
-    
-    expected <- theta
-    
-    actual <- unvectorize_theta(vectorize_theta(theta),
-        lags,
-        ssr_control=list(theta_est=list(a="bw", b=c("bw", "period"))),
-        add_fixed_params=FALSE)
-    
-    expect_identical(actual, expected)
-})
-
-test_that("unvectorize_theta works, fixed params not included", {
-    theta <- list(a_lag1=list(bw=1),
-        a_lag5=list(bw=15),
-        b_lag0=list(bw=3,
-            period=12),
-        b_lag2=list(bw=2,
-            period=987))
-    
-    lags <- list(a=c(1, 5),
-        b=c(0, 2))
-    
-    expected <- list(a_lag1=list(bw=1),
-        a_lag5=list(bw=15),
-        b_lag0=list(bw=3),
-        b_lag2=list(bw=2))
-    
-    actual <- unvectorize_theta(vectorize_theta(theta),
-        lags,
-        ssr_control=list(theta_est=list(a="bw", b=c("bw")),
-            theta_fixed=list(b=list(period=15))),
-        add_fixed_params=FALSE)
-    
-    expect_identical(actual, expected)
-})
-
-test_that("unvectorize_theta works, fixed params included", {
-    theta <- list(a_lag1=list(bw=1),
-        a_lag5=list(bw=15),
-        b_lag0=list(bw=3,
-            period=12),
-        b_lag2=list(bw=2,
-            period=987))
-    
-    lags <- list(a=c(1, 5),
-        b=c(0, 2))
-    
-    expected <- list(a_lag1=list(bw=1),
-        a_lag5=list(bw=15),
-        b_lag0=list(bw=3, period=15),
-        b_lag2=list(bw=2, period=15))
-    
-    actual <- unvectorize_theta(vectorize_theta(theta),
-        lags,
-        ssr_control=list(theta_est=list(a="bw", b=c("bw")),
-            theta_fixed=list(b=list(period=15))),
-        add_fixed_params=TRUE)
-    
-    expect_identical(actual, expected)
-})
-
 
 test_that("compute_normalized_log_weights works", {
     init_val <- c(0, -100, -50, -78, -99, -0.2)
@@ -150,6 +71,8 @@ test_that("assemble_training_examples works", {
     expected_lead <- test_data[1:20 + 2, "b", drop=FALSE]
     expected_lead <- expected_lead[
         -c(seq_len(leading_rows_to_drop), c(14, 15, 18, 19, 20)), , drop=FALSE]
+	colnames(expected_lead) <- "b_horizon2"
+	rownames(expected_lead) <- as.integer(rownames(expected_lead)) - 2L
     expected <- list(lagged_obs=expected_lagged,
         lead_obs=expected_lead
     )
@@ -198,9 +121,9 @@ test_that("compute_lagged_obs_vecs works -- one variable not used", {
 })
 
 
-test_that("compute_kernel_values works", {
-    test_data <- data.frame(a = 1:10, b = rnorm(10))
-    lags <- list(a = c(1), b = c(0, 2, 3))
+test_that("compute_kernel_values works -- one component", {
+    test_data <- data.frame(a = 1:10, b = rnorm(10), c = rnorm(10))
+    lags <- list(a = c(1), b = c(0, 2, 3), c = c(2))
     leading_rows_to_drop <- 3
     trailing_rows_to_drop <- 1
     
@@ -223,6 +146,12 @@ test_that("compute_kernel_values works", {
     })
     expected <- apply(expected, 1, sum)
     
+	kernel_variable_groups <- list(unlist(lapply(seq_along(lags), function(ind) {
+		paste(names(lags)[ind], lags[[ind]], sep = "_lag")
+	})))
+	kernel_fns <- list("pdtmvn_kernel")
+	theta_fixed <- list(list())
+	
     actual <- compute_kernel_values(train_lagged_obs,
         prediction_lagged_obs,
         lags,
@@ -230,7 +159,9 @@ test_that("compute_kernel_values works", {
             b_lag0=list(bw=1.4),
             b_lag2=list(bw=1.5),
             b_lag3=list(bw=0.8)),
-        ssr_control=list(kernel_fns=list(a="squared_exp_kernel",
+        ssr_control=list(
+			kernel_variable_groups = kernel_variable_groups,
+			kernel_fns = list(a="squared_exp_kernel",
             b="squared_exp_kernel")),
         log = TRUE)
     
