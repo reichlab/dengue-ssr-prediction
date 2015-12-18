@@ -1,8 +1,9 @@
 Package: ssr
-Title: What the Package Does (one line, title case)
+Title: Prediction via kernel conditional density estimation with non-product kernel specifications
 Version: 0.0.0.9000
-Authors@R: person("First", "Last", , "first.last@example.com", role = c("aut", "cre"))
+Authors@R: person("Evan", "Ray", , "elray@umass.edu", role = c("aut", "cre"))
 Description: What the package does (one paragraph)
 Depends: R (>= 3.0.2)
+Imports: robust, pdtmvn
 License: What license is it under?
 LazyData: true
