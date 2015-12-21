@@ -2,6 +2,7 @@ library(ssr)
 library(magrittr)
 library(plyr)
 library(dplyr)
+library(mvtnorm)
 
 ## all functions in ssr.R
 ##   leading X means test written,
@@ -10,7 +11,7 @@ library(dplyr)
 ##   no leading character means test needs to be written still
 # S assemble_prediction_examples                       
 # X assemble_training_examples                         
-# X compute_kernel_values                              
+#   compute_kernel_values                              
 # X compute_lagged_obs_vecs                            
 # X compute_normalized_log_weights                     
 # S create_ssr_control                                 
@@ -54,11 +55,14 @@ test_that("compute_normalized_log_weights works", {
 
 test_that("assemble_training_examples works", {
     test_data <- data.frame(a = 1:20, b = rnorm(20))
-    lags <- list(a = c(1, 5), b = c(0, 2))
-    leading_rows_to_drop <- 6
+	vars_and_lags <- data.frame(var_name = c("a", "a", "b", "b"),
+		lag_value = c(1, 5, 0, 2),
+		stringsAsFactors = FALSE)
+	vars_and_lags$combined_name <- paste0(vars_and_lags$var_name, "_lag", vars_and_lags$lag_value)
+	leading_rows_to_drop <- 6
 
     actual <- assemble_training_examples(test_data,
-        lags,
+        vars_and_lags,
         y_names="b",
         leading_rows_to_drop=leading_rows_to_drop,
         additional_rows_to_drop=c(14, 15, 18),
@@ -66,7 +70,7 @@ test_that("assemble_training_examples works", {
         drop_trailing_rows=TRUE)
     
     expected_lagged <- compute_lagged_obs_vecs(test_data,
-        lags,
+        vars_and_lags,
         c(seq_len(leading_rows_to_drop), c(14, 15, 18, 19, 20)))
     expected_lead <- test_data[1:20 + 2, "b", drop=FALSE]
     expected_lead <- expected_lead[
@@ -82,7 +86,10 @@ test_that("assemble_training_examples works", {
 
 test_that("compute_lagged_obs_vecs works -- all variables used", {
     test_data <- data.frame(a = 1:10, b = rnorm(10))
-    lags <- list(a = c(1, 5), b = c(0, 2))
+	vars_and_lags <- data.frame(var_name = c("a", "a", "b", "b"),
+		lag_value = c(1, 5, 0, 2),
+		stringsAsFactors = FALSE)
+	vars_and_lags$combined_name <- paste0(vars_and_lags$var_name, "_lag", vars_and_lags$lag_value)
     leading_rows_to_drop <- 6
     trailing_rows_to_drop <- 1
     
@@ -94,7 +101,7 @@ test_that("compute_lagged_obs_vecs works -- all variables used", {
     expected <- expected[seq(from=7, to=9), 3:6]
     
     actual <- compute_lagged_obs_vecs(test_data,
-        lags,
+        vars_and_lags,
         c(seq_len(leading_rows_to_drop),
             seq(from=nrow(test_data) - trailing_rows_to_drop + 1,
                 to=nrow(test_data))))
@@ -104,7 +111,11 @@ test_that("compute_lagged_obs_vecs works -- all variables used", {
 
 test_that("compute_lagged_obs_vecs works -- one variable not used", {
     test_data <- data.frame(a = 1:10, b = rnorm(10))
-    lags <- list(b = c(0, 2))
+	vars_and_lags <- data.frame(var_name = c("b", "b"),
+		lag_value = c(0, 2),
+		stringsAsFactors = FALSE)
+	vars_and_lags$combined_name <- paste0(vars_and_lags$var_name, "_lag", vars_and_lags$lag_value)
+#	lags <- list(b = c(0, 2))
     leading_rows_to_drop <- 6
     trailing_rows_to_drop <- 0
     
@@ -114,59 +125,169 @@ test_that("compute_lagged_obs_vecs works -- one variable not used", {
     expected <- expected[seq(from=7, to=10), 3:4]
     
     actual <- compute_lagged_obs_vecs(test_data,
-        lags,
+        vars_and_lags,
         seq_len(leading_rows_to_drop))
     
     expect_identical(actual, expected)
 })
 
 
-test_that("compute_kernel_values works -- one component", {
+test_that("compute_kernel_values works -- one component, no discrete vars, all vars used", {
     test_data <- data.frame(a = 1:10, b = rnorm(10), c = rnorm(10))
-    lags <- list(a = c(1), b = c(0, 2, 3), c = c(2))
-    leading_rows_to_drop <- 3
+	vars_and_lags <- data.frame(var_name = c("a", "b", "b", "b", "c"),
+		lag_value = c(1, 0, 2, 3, 2),
+		stringsAsFactors = FALSE)
+	vars_and_lags$combined_name <- paste0(vars_and_lags$var_name, "_lag", vars_and_lags$lag_value)
+
+	leading_rows_to_drop <- 3
     trailing_rows_to_drop <- 1
     
     train_lagged_obs <- compute_lagged_obs_vecs(test_data,
-        lags,
+        vars_and_lags,
         c(seq_len(leading_rows_to_drop),
             seq(from=nrow(test_data) - trailing_rows_to_drop + 1,
                 to=nrow(test_data))))
     
     prediction_lagged_obs <- compute_lagged_obs_vecs(test_data,
-        lags,
+        vars_and_lags,
         seq_len(9))
     
-    bws <- c(1.3, 1.4, 1.5, 0.8)
-    expected <- sapply(seq_len(ncol(train_lagged_obs)), function(ind) {
-        squared_exp_kernel(x=train_lagged_obs[, ind],
-            center=prediction_lagged_obs[, ind],
-            bw=bws[ind],
-            log=TRUE)
-    })
-    expected <- apply(expected, 1, sum)
+    bws <- c(1.3, 1.4, 1.5, 0.8, 0.34)
+	expected <- dmvnorm(train_lagged_obs, mean = unlist(prediction_lagged_obs), sigma = diag(bws), log = TRUE)
+    names(expected) <- NULL
     
-	kernel_variable_groups <- list(unlist(lapply(seq_along(lags), function(ind) {
-		paste(names(lags)[ind], lags[[ind]], sep = "_lag")
-	})))
-	kernel_fns <- list("pdtmvn_kernel")
-	theta_fixed <- list(list())
+    
+    
+	kernel_components <- list(list(
+		vars_and_lags = vars_and_lags,
+		kernel_fn = pdtmvn_kernel,
+		theta_fixed = NULL,
+		theta_est = list("bw"),
+		initialize_theta_fn = initialize_params_pdtmvn_kernel,
+		initialize_theta_args = list(
+			continuous_vars = vars_and_lags$combined_name,
+			discrete_vars = NULL,
+			discrete_var_range_fns = NULL
+		),
+		vectorize_theta_est_fn = vectorize_params_pdtmvn_kernel,
+		vectorize_theta_est_args = NULL,
+		update_theta_from_vectorized_theta_est_fn = update_theta_from_vectorized_theta_est_pdtmvn_kernel,
+		update_theta_from_vectorized_theta_est_args = list(
+			parameterization = "bw-diagonalized-est-eigenvalues"
+		)
+	))
+
+	bw_eigen <- eigen(diag(bws))
+	theta <- list(
+		c(compute_pdtmvn_kernel_bw_params_from_bw_eigen(bw_evecs = bw_eigen$vectors,
+				bw_evals = bw_eigen$values,
+				continuous_var_col_inds = seq_len(5),
+				discrete_var_col_inds = NULL),
+			list(
+				continuous_vars = vars_and_lags$combined_name,
+				discrete_vars = NULL,
+				continuous_var_col_inds = seq_len(5),
+				discrete_var_col_inds = NULL,
+				discrete_var_range_functions = NULL,
+				lower = rep(-Inf, nrow(vars_and_lags)),
+				upper = rep(Inf, nrow(vars_and_lags)),
+				log = TRUE
+			)
+		)
+	)
 	
-    actual <- compute_kernel_values(train_lagged_obs,
-        prediction_lagged_obs,
-        lags,
-        theta=list(a_lag1=list(bw=1.3),
-            b_lag0=list(bw=1.4),
-            b_lag2=list(bw=1.5),
-            b_lag3=list(bw=0.8)),
-        ssr_control=list(
-			kernel_variable_groups = kernel_variable_groups,
-			kernel_fns = list(a="squared_exp_kernel",
-            b="squared_exp_kernel")),
+    actual <- compute_kernel_values(train_obs = train_lagged_obs,
+        prediction_obs = prediction_lagged_obs,
+        theta = theta,
+        ssr_control = list(
+			kernel_components = kernel_components),
         log = TRUE)
     
     expect_identical(actual, expected)
 })
+
+
+test_that("compute_kernel_values works -- one component, 1 continuous var, 1 discrete var, 1 var used", {
+        test_data <- data.frame(a = rnorm(10), b = rnorm(10), c = 1:10)
+        vars_and_lags <- data.frame(var_name = c("a", "b", "b", "b", "c"),
+            lag_value = c(1, 0, 2, 3, 2),
+            stringsAsFactors = FALSE)
+        vars_and_lags$combined_name <- paste0(vars_and_lags$var_name, "_lag", vars_and_lags$lag_value)
+        
+        leading_rows_to_drop <- 3
+        trailing_rows_to_drop <- 1
+        
+        train_lagged_obs <- compute_lagged_obs_vecs(test_data,
+            vars_and_lags,
+            c(seq_len(leading_rows_to_drop),
+                seq(from=nrow(test_data) - trailing_rows_to_drop + 1,
+                    to=nrow(test_data))))
+        
+        prediction_lagged_obs <- compute_lagged_obs_vecs(test_data,
+            vars_and_lags,
+            seq_len(9))
+        
+        bws <- c(1.3, 1.4, 1.5, 0.8, 0.34)
+        expected <- pdtmvn::dpdtmvn(x = train_lagged_obs[, 2:5, drop = FALSE],
+            mean = unlist(prediction_lagged_obs[, 2:5, drop = FALSE]),
+            sigma = diag(bws[2:5]),
+            continuous_vars = 1:3,
+            discrete_vars = 4,
+            log = TRUE)
+        names(expected) <- NULL
+        
+        
+        
+        kernel_components <- list(list(
+                vars_and_lags = vars_and_lags[2:5, ],
+                kernel_fn = pdtmvn_kernel,
+                theta_fixed = NULL,
+                theta_est = list("bw"),
+                initialize_theta_fn = initialize_params_pdtmvn_kernel,
+                initialize_theta_args = list(
+                    continuous_vars = vars_and_lags$combined_name[2:4],
+                    discrete_vars = vars_and_lags$combined_name[5],
+                    discrete_var_range_fns = list(
+                        c = list(a = "pdtmvn::floor_x_minus_1", b = "floor", in_range = "pdtmvn::equals_integer"))
+                ),
+                vectorize_theta_est_fn = vectorize_params_pdtmvn_kernel,
+                vectorize_theta_est_args = NULL,
+                update_theta_from_vectorized_theta_est_fn = update_theta_from_vectorized_theta_est_pdtmvn_kernel,
+                update_theta_from_vectorized_theta_est_args = list(
+                    parameterization = "bw-diagonalized-est-eigenvalues"
+                )
+            ))
+        
+        bw_eigen <- eigen(diag(bws[2:5]))
+        theta <- list(
+            c(compute_pdtmvn_kernel_bw_params_from_bw_eigen(bw_evecs = bw_eigen$vectors,
+                    bw_evals = bw_eigen$values,
+                    continuous_var_col_inds = 1:3,
+                    discrete_var_col_inds = 4),
+                list(
+                    continuous_vars = vars_and_lags$combined_name,
+                    discrete_vars = "c",
+                    continuous_var_col_inds = 1:3,
+                    discrete_var_col_inds = 4,
+                    discrete_var_range_fns = list(
+                        c = list(a = pdtmvn::floor_x_minus_1, b = floor, in_range = pdtmvn::equals_integer)),
+                    lower = rep(-Inf, 4),
+                    upper = rep(Inf, 4),
+                    log = TRUE
+                )
+            )
+        )
+        
+        actual <- compute_kernel_values(train_obs = train_lagged_obs,
+            prediction_obs = prediction_lagged_obs,
+            theta = theta,
+            ssr_control = list(
+                kernel_components = kernel_components),
+            log = TRUE)
+        
+        expect_identical(actual, expected)
+    })
+
 
 # test_that("ssr_predict with squared exponential kernel works", {
 #     test_data <- data.frame(a = 1:10, b = rnorm(10))

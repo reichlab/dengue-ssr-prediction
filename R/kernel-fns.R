@@ -29,18 +29,18 @@ periodic_kernel <- function(x, center, period, bw, log) {
 #' @return list with two components: continuous_vars is an integer vector of
 #'     columns in x corresponding to continuous variables and discrete_vars is
 #'     an integer vector of columns in x corresponding to discrete variables
-get_int_continuous_discrete_vars_used <- function(x_colnames,
+get_col_inds_continuous_discrete_vars_used <- function(x_colnames,
 		continuous_vars,
 		discrete_vars) {
 	if(is.null(x_colnames)) {
 		stop("x must have column names")
 	}
-	int_continuous_vars <- seq_along(x_colnames)[x_colnames %in% continuous_vars]
-	int_discrete_vars <- seq_along(x_colnames)[x_colnames %in% discrete_vars]
+	col_inds_continuous_vars <- seq_along(x_colnames)[x_colnames %in% continuous_vars]
+	col_inds_discrete_vars <- seq_along(x_colnames)[x_colnames %in% discrete_vars]
 	
 	return(list(
-		continuous_vars = int_continuous_vars,
-		discrete_vars = int_discrete_vars
+		continuous_vars = col_inds_continuous_vars,
+		discrete_vars = col_inds_discrete_vars
 	))
 }
 
@@ -72,6 +72,7 @@ get_int_continuous_discrete_vars_used <- function(x_colnames,
 #' @param lower Vector of lower truncation points
 #' @param upper Vector of upper truncation points
 #' @param log logical; if TRUE, return the log of the kernel function value
+#' @param ... mop up extra arguments
 #' 
 #' @return the value of the kernel function given by the pdtmvn distribution
 #'     at x.
@@ -83,16 +84,17 @@ pdtmvn_kernel <- function(x,
 		conditional_center_discrete_offset_multiplier,
 		continuous_vars,
 		discrete_vars,
-		discrete_var_range_functions,
+		continuous_var_col_inds,
+		discrete_var_col_inds,
+		discrete_var_range_fns,
 		lower,
 		upper,
-		log) {
-	int_continuous_discrete_vars <-
-		get_int_continuous_discrete_vars_used(colnames(x),
-			continuous_vars,
-			discrete_vars)
-	
-	return(dpdtmvn(x = x,
+		log,
+        ...) {
+    if(length(dim(center)) > 0) {
+        center <- as.vector(as.matrix(center))
+    }
+	return(pdtmvn::dpdtmvn(x = x,
 		mean = center,
 		sigma = bw,
 		sigma_continuous = bw_continuous,
@@ -101,9 +103,9 @@ pdtmvn_kernel <- function(x,
 			conditional_center_discrete_offset_multiplier,
 		lower = lower,
 		upper = upper,
-		continuous_vars = int_continuous_discrete_vars$continuous_vars,
-		discrete_vars = int_continuous_discrete_vars$discrete_vars,
-		discrete_var_range_functions = discrete_var_range_functions[discrete_vars],
+		continuous_vars = continuous_var_col_inds,
+		discrete_vars = discrete_var_col_inds,
+		discrete_var_range_functions = discrete_var_range_fns[discrete_vars],
 		log = log,
 		validate_level = 1))
 }
@@ -123,19 +125,18 @@ pdtmvn_kernel <- function(x,
 #'     conditional_bw_discrete, and conditional_center_discrete_offset_multiplier
 compute_pdtmvn_kernel_bw_params_from_bw_eigen <- function(bw_evecs,
     bw_evals,
-    continuous_vars,
-    discrete_vars) {
-	int_continuous_discrete_vars <-
-		get_int_continuous_discrete_vars_used(colnames(x),
-			continuous_vars,
-			discrete_vars)
-	
+    continuous_var_col_inds,
+    discrete_var_col_inds) {
     bw <- bw_evecs %*% diag(bw_evals) %*% t(bw_evecs)
     
-    bw_params <- c(list(bw = bw),
+    bw_params <- c(
+		list(bw = bw,
+			bw_evecs = bw_evecs,
+			bw_evals = bw_evals,
+			log_bw_evals = log(bw_evals)),
         pdtmvn::compute_sigma_subcomponents(sigma = bw,
-            continuous_vars = int_continuous_discrete_vars$continuous_vars,
-            discrete_vars = int_continuous_discrete_vars$discrete_vars,
+            continuous_vars = continuous_var_col_inds,
+            discrete_vars = discrete_var_col_inds,
             validate_level = 0)
     )
     
@@ -181,15 +182,18 @@ vectorize_params_pdtmvn_kernel <- function(theta_list, parameterization, ssr_con
 #' @param ssr_control list of control parameters to ssr
 #' 
 #' @return list of parameters to pdtmvn_kernel
-unvectorize_params_pdtmvn_kernel <- function(theta_vector, parameterization, bw_evecs, continuous_vars, discrete_vars, ssr_control) {
+update_theta_from_vectorized_theta_est_pdtmvn_kernel <- function(theta_vector, theta, parameterization) {
 	if(identical(parameterization, "bw-diagonalized-est-eigenvalues")) {
-		num_bw_evals <- ncol(bw_evecs)
+		num_bw_evals <- ncol(theta$bw_evecs)
+		temp <- compute_pdtmvn_kernel_bw_params_from_bw_eigen(bw_evecs = theta$bw_evecs,
+			bw_evals = exp(theta_vector[seq_len(num_bw_evals)]),
+			theta$continuous_var_col_inds,
+			theta$discrete_var_col_inds)
+		
+		theta[names(temp)] <- temp
+
 		return(list(
-			params = c(compute_pdtmvn_kernel_bw_params_from_bw_eigen(bw_evecs,
-			    	bw_evals = exp(theta_vector[seq_len(num_bw_evals)]),
-			    	continuous_vars,
-			    	discrete_vars),
-			    list(log_bw_evals = theta_vector[seq_len(num_bw_evals)])),
+			theta = theta,
 			num_theta_vals_used = num_bw_evals
 		))
 	} else {
@@ -217,23 +221,35 @@ initialize_params_pdtmvn_kernel <- function(parameterization,
 	x,
 	continuous_vars,
 	discrete_vars,
+	discrete_var_range_fns,
+	lower,
+	upper,
 	ssr_control,
 	...) {
 	require(robust)
 	
 	if(identical(parameterization, "bw-diagonalized-est-eigenvalues")) {
+		continuous_discrete_var_col_inds <-
+			get_col_inds_continuous_discrete_vars_used(colnames(x),
+				continuous_vars,
+				discrete_vars)
+		
 		sample_cov_hat <- robust::covRob(x)$cov
 		sample_cov_eigen <- eigen(sample_cov_hat)
 		
 		return(c(
-			compute_pdtmvn_kernel_bw_params_from_bw_eigen(sample_cov_eigen$vectors,
+			compute_pdtmvn_kernel_bw_params_from_bw_eigen(bw_evecs = sample_cov_eigen$vectors,
 			    bw_evals = sample_cov_eigen$values,
-			    continuous_vars,
-			    discrete_vars),
+				continuous_discrete_var_col_inds$continuous_vars,
+				continuous_discrete_var_col_inds$discrete_vars),
 			list(
-				bw_evecs = sample_cov_eigen$vectors,
-				bw_evals = sample_cov_eigen$values,
-				log_bw_evals = log(sample_cov_eigen$values)),
+				continuous_vars = continuous_vars,
+				discrete_vars = discrete_vars,
+				continuous_var_col_inds = continuous_discrete_var_col_inds$continuous_vars,
+				discrete_var_col_inds = continuous_discrete_var_col_inds$discrete_vars,
+				discrete_var_range_fns = discrete_var_range_fns,
+				lower = lower[colnames(x)],
+				upper = upper[colnames(x)]),
 			ssr_control
 		))
 	} else {

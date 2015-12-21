@@ -629,8 +629,7 @@ update_theta_from_vectorized_theta_est <- function(theta_est_vector,
         	c(list(theta_est_vector = theta_est_vector[
 					seq(from = theta_vector_component_start_ind,
         				to = length(theta_vector))],
-        		theta = theta[[ind]],
-        		ssr_control = ssr_control),
+        		theta = theta[[ind]]),
         		ssr_control$kernel_components[[ind]]$
 					update_theta_from_vectorized_theta_est_args)
         )
@@ -1144,8 +1143,8 @@ compute_lagged_obs_vecs <- function(data,
     ## set column values in result
 	for(new_var_ind in seq_len(nrow(vars_and_lags))) {
 		lag_val <- vars_and_lags[new_var_ind, "lag_value"]
-		var_name <- vars_and_lags[new_var_ind, "var_name"]
-		combined_name <- vars_and_lags[new_var_ind, "combined_name"]
+		var_name <- as.character(vars_and_lags[new_var_ind, "var_name"])
+		combined_name <- as.character(vars_and_lags[new_var_ind, "combined_name"])
 		
 		result_inds <- seq(from=lag_val + 1, to=nrow(result))
 		data_inds <- seq(from=1, to=nrow(result) - lag_val)
