@@ -332,57 +332,6 @@ update_vars_and_lags <- function(prev_vars_and_lags,
 }
 
 
-#' Initialize parameter values.
-#'
-#' @param prev_theta previous theta values before update to variables and lags
-#' @param updated_vars_and_lags lags after update
-#' @param update_var_name character; the name of the variable added/removed from the model
-#' @param update_lag_value integer; the lag that was added/removed from the model
-#' @param data data matrix
-#' @param ssr_control list of control parameters for ssr
-#' 
-#' @return list of theta parameters
-initialize_theta <- function(prev_theta,
-		updated_vars_and_lags,
-    	update_var_name,
-    	update_lag_value,
-    	data,
-    	ssr_control) {
-    theta <- lapply(seq_along(ssr_control$kernel_components),
-    	function(ind) {
-    		updated_var_and_lag_in_current_component <-
-    			any(ssr_control$kernel_components[[ind]]$vars_and_lags$var_name == update_var_name &
-    				ssr_control$kernel_components[[ind]]$vars_and_lags$lag_value == update_lag_value)
-    		if(updated_var_and_lag_in_current_component ||
-					is.null(prev_theta[[ind]])) {
-    			potential_cols_in_component <-
-					ssr_control$kernel_components[[ind]]$vars_and_lags$combined_name
-				cols_used <- colnames(data) %in% potential_cols_in_component
-				if(length(cols_used) > 0) {
-					fn_name <- ssr_control$kernel_components[[ind]]$
-							initialize_kernel_params_fn
-					
-					fn_args <- ssr_control$kernel_components[[ind]]$
-							initialize_kernel_params_args
-					fn_args$update_var_name <- update_var_name
-					fn_args$update_lag_value <- update_lag_value
-					fn_args$prev_theta <- prev_theta[[ind]]
-					fn_args$ssr_control <- ssr_control
-					fn_args$x <- data[, cols_used, drop=FALSE]
-					
-					return(do.call(fn_name, fn_args))
-				} else {
-					return(NULL)
-				}
-    		} else {
-    			return(prev_theta[[ind]])
-    		}
-    	}
-    )
-    
-    return(theta)
-}
-
 #' Estimate the parameters theta and corresponding cross-validated estimate of
 #' loss for one possible model obtained by adding or removing a variable/lag
 #' combination from the model obtained in the previous iteration of the stepwise
@@ -577,6 +526,58 @@ ssr_crossval_estimate_parameter_loss <- function(theta_est_vector,
 }
 
 
+#' Initialize parameter values.
+#'
+#' @param prev_theta previous theta values before update to variables and lags
+#' @param updated_vars_and_lags lags after update
+#' @param update_var_name character; the name of the variable added/removed from the model
+#' @param update_lag_value integer; the lag that was added/removed from the model
+#' @param data data matrix
+#' @param ssr_control list of control parameters for ssr
+#' 
+#' @return list of theta parameters
+initialize_theta <- function(prev_theta,
+    updated_vars_and_lags,
+    update_var_name,
+    update_lag_value,
+    data,
+    ssr_control) {
+    theta <- lapply(seq_along(ssr_control$kernel_components),
+        function(ind) {
+            updated_var_and_lag_in_current_component <-
+                any(ssr_control$kernel_components[[ind]]$vars_and_lags$var_name == update_var_name &
+                        ssr_control$kernel_components[[ind]]$vars_and_lags$lag_value == update_lag_value)
+            if(updated_var_and_lag_in_current_component ||
+                is.null(prev_theta[[ind]])) {
+                potential_cols_in_component <-
+                    ssr_control$kernel_components[[ind]]$vars_and_lags$combined_name
+                cols_used <- colnames(data) %in% potential_cols_in_component
+                if(length(cols_used) > 0) {
+                    fn_name <- ssr_control$kernel_components[[ind]]$
+                        initialize_kernel_params_fn
+                    
+                    fn_args <- ssr_control$kernel_components[[ind]]$
+                        initialize_kernel_params_args
+                    fn_args$update_var_name <- update_var_name
+                    fn_args$update_lag_value <- update_lag_value
+                    fn_args$prev_theta <- prev_theta[[ind]]
+                    fn_args$ssr_control <- ssr_control
+                    fn_args$x <- data[, cols_used, drop=FALSE]
+                    
+                    return(do.call(fn_name, fn_args))
+                } else {
+                    return(NULL)
+                }
+            } else {
+                return(prev_theta[[ind]])
+            }
+        }
+    )
+    
+    return(theta)
+}
+
+
 #' Extract a vector of parameter values that are to be estimated from theta,
 #' on the estimation scale.
 #' 
@@ -598,15 +599,14 @@ extract_vectorized_theta_est_from_theta <- function(theta,
     for(ind in seq_along(ssr_control$kernel_components)) {
         ## parameters that are being estimated
         theta_vector <- c(theta_vector, do.call(
-			ssr_control$kernel_components[[ind]]$vectorize_kernel_param_fns,
+			ssr_control$kernel_components[[ind]]$vectorize_kernel_params_fn,
        		c(list(theta_list = theta[[ind]],
-				vars_and_lags = vars_and_lags,
-       			ssr_control = ssr_control),
-       			ssr_control$kernel_components[[ind]]$vectorize_kernel_param_args)
+				vars_and_lags = vars_and_lags),
+       			ssr_control$kernel_components[[ind]]$vectorize_kernel_params_args)
        	))
     }
 
-    return(theta)
+    return(theta_vector)
 }
 
 #' Convert theta from vector form to list form
@@ -627,10 +627,10 @@ update_theta_from_vectorized_theta_est <- function(theta_est_vector,
         ## parameters that are being estimated
         temp <- do.call(
 			ssr_control$kernel_components[[ind]]$
-				update_theta_from_vectorized_theta_est,
+				update_theta_from_vectorized_theta_est_fn,
         	c(list(theta_est_vector = theta_est_vector[
 					seq(from = theta_vector_component_start_ind,
-        				to = length(theta_vector))],
+        				to = length(theta_est_vector))],
         		theta = theta[[ind]]),
         		ssr_control$kernel_components[[ind]]$
 					update_theta_from_vectorized_theta_est_args)
@@ -639,7 +639,7 @@ update_theta_from_vectorized_theta_est <- function(theta_est_vector,
         theta_vector_component_start_ind <- theta_vector_component_start_ind +
 			temp$num_theta_vals_used
         
-        theta[[ind]] <- temp$params
+        theta[[ind]] <- temp$theta
     }
 
     return(theta)

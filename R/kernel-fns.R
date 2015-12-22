@@ -154,11 +154,11 @@ compute_pdtmvn_kernel_bw_params_from_bw_eigen <- function(bw_evecs,
 #' @param theta_list parameters for the pdtmvn_kernel in list format
 #' @param parameterization character; currently, only supported value is
 #'     "bw-diagonalized-est-eigenvalues"
-#' @param ssr_control list of control parameters for ssr
+#' @param ... mop up other arguments
 #'
 #' @return vector containing parameters that are estimated on a scale
 #'     suitable for numerical optimization
-vectorize_params_pdtmvn_kernel <- function(theta_list, parameterization, ssr_control) {
+vectorize_params_pdtmvn_kernel <- function(theta_list, parameterization, ...) {
 	if(identical(parameterization, "bw-diagonalized-est-eigenvalues")) {
 		return(theta_list$log_bw_evals)
 	} else {
@@ -182,11 +182,11 @@ vectorize_params_pdtmvn_kernel <- function(theta_list, parameterization, ssr_con
 #' @param ssr_control list of control parameters to ssr
 #' 
 #' @return list of parameters to pdtmvn_kernel
-update_theta_from_vectorized_theta_est_pdtmvn_kernel <- function(theta_vector, theta, parameterization) {
+update_theta_from_vectorized_theta_est_pdtmvn_kernel <- function(theta_est_vector, theta, parameterization) {
 	if(identical(parameterization, "bw-diagonalized-est-eigenvalues")) {
 		num_bw_evals <- ncol(theta$bw_evecs)
 		temp <- compute_pdtmvn_kernel_bw_params_from_bw_eigen(bw_evecs = theta$bw_evecs,
-			bw_evals = exp(theta_vector[seq_len(num_bw_evals)]),
+			bw_evals = exp(theta_est_vector[seq_len(num_bw_evals)]),
 			theta$continuous_var_col_inds,
 			theta$discrete_var_col_inds)
 		
