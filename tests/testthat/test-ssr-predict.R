@@ -11,7 +11,7 @@ library(mvtnorm)
 ##   no leading character means test needs to be written still
 # S assemble_prediction_examples                       
 # X assemble_training_examples                         
-#   compute_kernel_values                              
+# X compute_kernel_values                              
 # X compute_lagged_obs_vecs                            
 # X compute_normalized_log_weights                     
 # S create_ssr_control                                 
@@ -24,7 +24,7 @@ library(mvtnorm)
 # S get_inds_smallest_k                                
 #   get_prediction_season_week                         
 #   get_pt_predictions_one_week                        
-#   initialize_theta
+# X initialize_theta
 #   mae_from_kernel_weights_and_centers
 #   mase_from_kernel_weights_and_centers
 #   ssr                                                
@@ -35,7 +35,7 @@ library(mvtnorm)
 #   ssr_predict                                        
 #   ssr_predict_dengue_one_week                        
 #   ssr_predict_given_lagged_obs                       
-#   update_lags
+# X update_vars_and_lags
 #   update_theta_from_vectorized_theta_est
 #   validate_ssr_control                               
 
@@ -163,8 +163,8 @@ test_that("compute_kernel_values works -- one component, no discrete vars, all v
 		kernel_fn = pdtmvn_kernel,
 		theta_fixed = NULL,
 		theta_est = list("bw"),
-		initialize_theta_fn = initialize_params_pdtmvn_kernel,
-		initialize_theta_args = list(
+		initialize_kernel_params_fn = initialize_params_pdtmvn_kernel,
+		initialize_kernel_params_args = list(
 			continuous_vars = vars_and_lags$combined_name,
 			discrete_vars = NULL,
 			discrete_var_range_fns = NULL
@@ -243,8 +243,8 @@ test_that("compute_kernel_values works -- one component, 1 continuous var, 1 dis
                 kernel_fn = pdtmvn_kernel,
                 theta_fixed = NULL,
                 theta_est = list("bw"),
-                initialize_theta_fn = initialize_params_pdtmvn_kernel,
-                initialize_theta_args = list(
+                initialize_kernel_params_fn = initialize_params_pdtmvn_kernel,
+                initialize_kernel_params_args = list(
                     continuous_vars = vars_and_lags$combined_name[2:4],
                     discrete_vars = vars_and_lags$combined_name[5],
                     discrete_var_range_fns = list(
@@ -288,6 +288,265 @@ test_that("compute_kernel_values works -- one component, 1 continuous var, 1 dis
         expect_identical(actual, expected)
     })
 
+
+test_that("compute_kernel_values works -- two components", {
+    test_data <- data.frame(a = rnorm(10), b = rnorm(10), c = 1:10)
+    vars_and_lags <- data.frame(var_name = c("a", "b", "b", "b", "c"),
+        lag_value = c(1, 0, 2, 3, 2),
+        stringsAsFactors = FALSE)
+    vars_and_lags$combined_name <- paste0(vars_and_lags$var_name, "_lag", vars_and_lags$lag_value)
+    
+    leading_rows_to_drop <- 3
+    trailing_rows_to_drop <- 1
+    
+    train_lagged_obs <- compute_lagged_obs_vecs(test_data,
+        vars_and_lags,
+        c(seq_len(leading_rows_to_drop),
+            seq(from=nrow(test_data) - trailing_rows_to_drop + 1,
+                to=nrow(test_data))))
+    
+    prediction_lagged_obs <- compute_lagged_obs_vecs(test_data,
+        vars_and_lags,
+        seq_len(9))
+    
+    bws <- c(1.3, 1.4, 1.5, 0.8, 0.34)
+    expected <-
+        pdtmvn::dpdtmvn(x = train_lagged_obs[, 1:2, drop = FALSE],
+            mean = unlist(prediction_lagged_obs[, 1:2, drop = FALSE]),
+            sigma = diag(bws[1:2]),
+            continuous_vars = 1:2,
+            discrete_vars = NULL,
+            log = TRUE) +
+        pdtmvn::dpdtmvn(x = train_lagged_obs[, 3:5, drop = FALSE],
+            mean = unlist(prediction_lagged_obs[, 3:5, drop = FALSE]),
+            sigma = diag(bws[3:5]),
+            continuous_vars = 1:2,
+            discrete_vars = 3,
+            log = TRUE)
+    names(expected) <- NULL
+    
+    
+    
+    kernel_components <- list(list(
+            vars_and_lags = vars_and_lags[1:2, ],
+            kernel_fn = pdtmvn_kernel,
+            theta_fixed = NULL,
+            theta_est = list("bw"),
+            initialize_kernel_params_fn = initialize_params_pdtmvn_kernel,
+            initialize_kernel_params_args = list(
+                continuous_vars = vars_and_lags$combined_name[1:2],
+                discrete_vars = NULL,
+                discrete_var_range_fns = NULL
+            ),
+            vectorize_theta_est_fn = vectorize_params_pdtmvn_kernel,
+            vectorize_theta_est_args = NULL,
+            update_theta_from_vectorized_theta_est_fn = update_theta_from_vectorized_theta_est_pdtmvn_kernel,
+            update_theta_from_vectorized_theta_est_args = list(
+                parameterization = "bw-diagonalized-est-eigenvalues"
+            )
+        ),
+        list(
+            vars_and_lags = vars_and_lags[3:5, ],
+            kernel_fn = pdtmvn_kernel,
+            theta_fixed = NULL,
+            theta_est = list("bw"),
+            initialize_kernel_params_fn = initialize_params_pdtmvn_kernel,
+            initialize_kernel_params_args = list(
+                continuous_vars = vars_and_lags$combined_name[3:4],
+                discrete_vars = vars_and_lags$combined_name[5],
+                discrete_var_range_fns = list(
+                    c = list(a = pdtmvn::floor_x_minus_1, b = floor, in_range = pdtmvn::equals_integer))
+            ),
+            vectorize_theta_est_fn = vectorize_params_pdtmvn_kernel,
+            vectorize_theta_est_args = NULL,
+            update_theta_from_vectorized_theta_est_fn = update_theta_from_vectorized_theta_est_pdtmvn_kernel,
+            update_theta_from_vectorized_theta_est_args = list(
+                parameterization = "bw-diagonalized-est-eigenvalues"
+            )
+        ))
+    
+    bw_eigen_1 <- eigen(diag(bws[1:2]))
+    bw_eigen_2 <- eigen(diag(bws[3:5]))
+    theta <- list(
+        c(compute_pdtmvn_kernel_bw_params_from_bw_eigen(bw_evecs = bw_eigen_1$vectors,
+                bw_evals = bw_eigen_1$values,
+                continuous_var_col_inds = 1:2,
+                discrete_var_col_inds = NULL),
+            list(
+                continuous_vars = vars_and_lags$combined_name,
+                discrete_vars = NULL,
+                continuous_var_col_inds = 1:2,
+                discrete_var_col_inds = NULL,
+                discrete_var_range_fns = NULL,
+                lower = rep(-Inf, 2),
+                upper = rep(Inf, 2),
+                log = TRUE
+            )
+        ),
+        c(compute_pdtmvn_kernel_bw_params_from_bw_eigen(bw_evecs = bw_eigen_2$vectors,
+                bw_evals = bw_eigen_2$values,
+                continuous_var_col_inds = 1:2,
+                discrete_var_col_inds = 3),
+            list(
+                continuous_vars = vars_and_lags$combined_name,
+                discrete_vars = "c",
+                continuous_var_col_inds = 1:2,
+                discrete_var_col_inds = 3,
+                discrete_var_range_fns = list(
+                    c = list(a = pdtmvn::floor_x_minus_1, b = floor, in_range = pdtmvn::equals_integer)),
+                lower = rep(-Inf, 3),
+                upper = rep(Inf, 3),
+                log = TRUE
+            )
+        )
+    )
+    
+    actual <- compute_kernel_values(train_obs = train_lagged_obs,
+        prediction_obs = prediction_lagged_obs,
+        theta = theta,
+        ssr_control = list(
+            kernel_components = kernel_components),
+        log = TRUE)
+    
+    expect_identical(actual, expected)
+})
+    
+    
+test_that("update_vars_and_lags works", {
+    orig_vars_and_lags <-  data.frame(var_name = c("a", "b", "b", "b", "c"),
+        lag_value = as.integer(c(1, 0, 2, 3, 2)),
+        stringsAsFactors = FALSE)
+    orig_vars_and_lags$combined_name <- paste0(orig_vars_and_lags$var_name, "_lag", orig_vars_and_lags$lag_value)
+    
+    ## test removal
+    update_var_name <- "b"
+    update_lag_value <- 3
+    
+    expected <- orig_vars_and_lags[-4, , drop = FALSE]
+    
+    actual <- update_vars_and_lags(orig_vars_and_lags,
+        update_var_name,
+        update_lag_value)
+    
+    expect_identical(actual, expected)
+        
+    ## test addition
+    update_var_name <- "a"
+    update_lag_value <- 4
+    
+    expected <- orig_vars_and_lags
+    expected[6, ] <- c("a", 4L, "a_lag4")
+    expected$lag_value <- as.integer(expected$lag_value)
+    
+    actual <- update_vars_and_lags(orig_vars_and_lags,
+        update_var_name,
+        update_lag_value)
+    
+    expect_identical(actual, expected)
+})
+
+
+test_that("initialize_theta works", {
+    test_data <- data.frame(a = rnorm(10), b = rnorm(10), c = 1:10)
+    vars_and_lags <- data.frame(var_name = c("a", "b", "b", "b", "c"),
+        lag_value = c(1, 0, 2, 3, 2),
+        stringsAsFactors = FALSE)
+    vars_and_lags$combined_name <- paste0(vars_and_lags$var_name, "_lag", vars_and_lags$lag_value)
+    
+    leading_rows_to_drop <- 3
+    trailing_rows_to_drop <- 1
+    
+    train_lagged_obs <- compute_lagged_obs_vecs(test_data,
+        vars_and_lags,
+        c(seq_len(leading_rows_to_drop),
+            seq(from=nrow(test_data) - trailing_rows_to_drop + 1,
+                to=nrow(test_data))))
+    
+    expected <- list(
+        initialize_params_pdtmvn_kernel(
+            parameterization = "bw-diagonalized-est-eigenvalues",
+            x = train_lagged_obs[, 1:2],
+            continuous_vars = c("a_lag1", "b_lag0"),
+            discrete_vars = NULL,
+            discrete_var_range_fns = NULL,
+            lower = c(a_lag1 = -Inf, b_lag0 = -Inf),
+            upper = c(a_lag1 = Inf, b_lag0 = Inf)),
+        initialize_params_pdtmvn_kernel(
+            parameterization = "bw-diagonalized-est-eigenvalues",
+            x = train_lagged_obs[, 3:5],
+            continuous_vars = c("b_lag2", "b_lag3"),
+            discrete_vars = "c_lag2",
+            discrete_var_range_fns = list(
+                c_lag2 = list(a = pdtmvn::floor_x_minus_1,
+                    b = floor,
+                    in_range = pdtmvn::equals_integer)),
+            lower = c(b_lag2 = -Inf, b_lag3 = -Inf, c_lag2 = -Inf),
+            upper = c(b_lag2 = Inf, b_lag3 = Inf, c_lag2 = Inf))
+    )
+    
+    
+    kernel_components <- list(list(
+            vars_and_lags = vars_and_lags[1:2, ],
+            kernel_fn = pdtmvn_kernel,
+            theta_fixed = NULL,
+            theta_est = list("bw"),
+            initialize_kernel_params_fn = initialize_params_pdtmvn_kernel,
+            initialize_kernel_params_args = list(
+                parameterization = "bw-diagonalized-est-eigenvalues",
+                continuous_vars = vars_and_lags$combined_name[1:2],
+                discrete_vars = NULL,
+                discrete_var_range_fns = NULL,
+                lower = c(a_lag1 = -Inf, b_lag0 = -Inf),
+                upper = c(a_lag1 = Inf, b_lag0 = Inf)
+            ),
+            vectorize_theta_est_fn = vectorize_params_pdtmvn_kernel,
+            vectorize_theta_est_args = NULL,
+            update_theta_from_vectorized_theta_est_fn = update_theta_from_vectorized_theta_est_pdtmvn_kernel,
+            update_theta_from_vectorized_theta_est_args = list(
+                parameterization = "bw-diagonalized-est-eigenvalues"
+            )
+        ),
+        list(
+            vars_and_lags = vars_and_lags[3:5, ],
+            kernel_fn = pdtmvn_kernel,
+            theta_fixed = NULL,
+            theta_est = list("bw"),
+            initialize_kernel_params_fn = initialize_params_pdtmvn_kernel,
+            initialize_kernel_params_args = list(
+                parameterization = "bw-diagonalized-est-eigenvalues",
+                continuous_vars = vars_and_lags$combined_name[3:4],
+                discrete_vars = vars_and_lags$combined_name[5],
+                discrete_var_range_fns = list(
+                    c_lag2 = list(a = pdtmvn::floor_x_minus_1, b = floor, in_range = pdtmvn::equals_integer)),
+                lower = c(b_lag2 = -Inf, b_lag3 = -Inf, c_lag2 = -Inf),
+                upper = c(b_lag2 = Inf, b_lag3 = Inf, c_lag2 = Inf)
+            ),
+            vectorize_theta_est_fn = vectorize_params_pdtmvn_kernel,
+            vectorize_theta_est_args = NULL,
+            update_theta_from_vectorized_theta_est_fn = update_theta_from_vectorized_theta_est_pdtmvn_kernel,
+            update_theta_from_vectorized_theta_est_args = list(
+                parameterization = "bw-diagonalized-est-eigenvalues"
+            )
+        ))
+    
+    
+    actual <- initialize_theta(prev_theta = NULL,
+        updated_vars_and_lags = vars_and_lags,
+        update_var_name = "b",
+        update_lag_value = 3L,
+        data = train_lagged_obs,
+        ssr_control = list(kernel_components = kernel_components))
+    
+    expect_identical(actual, expected)
+})
+
+test_that("extract_vectorized_theta_est_from_theta works", {
+    
+})
+
+test_that("update_theta_from_vectorized_theta_est", {
+    
+})
 
 # test_that("ssr_predict with squared exponential kernel works", {
 #     test_data <- data.frame(a = 1:10, b = rnorm(10))

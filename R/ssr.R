@@ -322,7 +322,7 @@ update_vars_and_lags <- function(prev_vars_and_lags,
         ## add variable/lag combination to model
 		updated_vars_and_lags <- rbind(updated_vars_and_lags,
 			data.frame(var_name = update_var_name,
-				lag_value = update_lag_value,
+				lag_value = as.integer(update_lag_value),
 				combined_name = paste0(update_var_name,
 					"_lag",
 					update_lag_value)))
@@ -379,6 +379,8 @@ initialize_theta <- function(prev_theta,
     		}
     	}
     )
+    
+    return(theta)
 }
 
 #' Estimate the parameters theta and corresponding cross-validated estimate of

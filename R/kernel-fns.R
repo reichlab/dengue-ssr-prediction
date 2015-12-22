@@ -224,7 +224,6 @@ initialize_params_pdtmvn_kernel <- function(parameterization,
 	discrete_var_range_fns,
 	lower,
 	upper,
-	ssr_control,
 	...) {
 	require(robust)
 	
@@ -249,8 +248,7 @@ initialize_params_pdtmvn_kernel <- function(parameterization,
 				discrete_var_col_inds = continuous_discrete_var_col_inds$discrete_vars,
 				discrete_var_range_fns = discrete_var_range_fns,
 				lower = lower[colnames(x)],
-				upper = upper[colnames(x)]),
-			ssr_control
+				upper = upper[colnames(x)])
 		))
 	} else {
 		stop("Invalid parameterization for pdtmvn kernel function")
