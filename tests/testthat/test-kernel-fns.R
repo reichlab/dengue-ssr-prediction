@@ -3,22 +3,22 @@ library(magrittr)
 library(plyr)
 library(dplyr)
 
-## all functions in ssr.R
+## all functions in kernel-fns.R
 ##   leading P means test written and passing
 ##   leading F means test written but failing
 ##   leading I means implicitly tested by another test
 ##   leading S means simple enough that no test is required
 ##   no leading character means test needs to be written still
 ##
-## S periodic_kernel                                    
+## S periodic_kernel
+##   get_col_inds_continuous_dicrete_vars_used
 ##   pdtmvn_kernel
 ## S compute_pdtmvn_kernel_bw_params_from_bw_eigen
 ##   vectorize_params_pdtmvn_kernel
-##   unvectorize_params_pdtmvn_kernel
+##   update_theta_from_vectorized_theta_est_pdtmvn_kernel
 ## S initialize_params_pdtmvn_kernel
 
-
-context("kernel functions -- no tests implemented")
+context("kernel-fns -- no tests implemented")
 
 #test_that("initialize_params_pdtmvn_kernel works", {
 #	parameterization <- "bw-diagonalized-est-eigenvalues"

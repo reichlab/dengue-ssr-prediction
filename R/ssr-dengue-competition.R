@@ -1,3 +1,189 @@
+## Functions that are specific to the dengue competition
+## It's likely that none of these work anymore
+## 
+## ssr_predict_dengue_one_week
+## get_pt_predictions_one_week
+## get_dist_predictions_one_week
+## get_prediction_season_week
+## make_competition_forecasts_by_trajectory
+## make_competition_forecasts_one_season_week
+## make_competition_forecasts_one_season_week_by_trajectory
+## simulate_counts_by_week
+## simulate_counts_by_week_by_trajectory
+## simulate_from_weighted_kde_given_ind
+## simulate_from_weighted_kde
+
+
+#' This is a wrapper for the ssr_predict function to perform prediction from
+#' the dengue data sets for the competition.  Computes KDE predictions for
+#' the number of cases in the weeks indexed by t + prediction_horizon, where
+#'   - t is specified by last_obs_season and last_obs_week
+#'   - prediction_horizon varies over the values in prediction_horizons
+#' Currently the function assumes that data have already been smoothed on the
+#' log scale and a data frame variable named smooth_log_cases is available.
+#' Log cases are used to do the SSR and get weights for each time point.
+#' KDE estimates are then computed both on the log scale using smooth_log_cases
+#' and also on the original data scale using exp(smooth_log_cases) as the
+#' centers.
+#' 
+#' @param last_obs_season is the season for the last observed week before we
+#'     want to make a prediction.  Has the form "2008/2009"
+#' @param last_obs_week is the last observed week of the season specified by
+#'     last_obs_season before we want to make a prediction.  An integer
+#'     between 1 and 52.
+#' @param lag_max is the number of lags to use in forming the state space
+#'     representation via lagged observations
+#' @param prediction_horizons is a vector giving the number of steps ahead
+#'     to do prediction from the week before first_predict_week
+#' @param data is the data set to use
+#' @param season_var is a string with the name of the variable in the data data
+#'     frame with the season.  I'm sure there is a better way to do this...
+#' @param week_var is a string with the name of the variable in the data data
+#'     frame with the week in the season.  I'm sure there is a better way to do this...
+#' @param predict_vars is a string vector with the names of the variables in the data data
+#'     frame to use for SSR.  I'm sure there is a better way to do this...
+#' @param prediction_types is a character vector indicating the prediction types
+#'     to perform: may contain one or more of "pt" and "density"
+#' 
+#' @return list of data frames with predictions.  one list component per entry
+#'     in prediction_types argument.  Density estimates are from KDE along a
+#'     grid of values for total_counts for each week that we predicted at.
+ssr_predict_dengue_one_week <- function(last_obs_season,
+    last_obs_week,
+	vars_and_lags,
+    theta,
+    prediction_bw,
+    prediction_horizon,
+    data,
+    season_var,
+    week_var,
+    X_names,
+    y_names,
+    time_name,
+    ssr_fit,
+    prediction_types = c("pt", "density")) {
+    
+  	if(length(y_names) > 1) {
+  		stop("SSR Prediction for multiple variables is not yet implemented!")
+  	}
+  	
+  	if(missing(ssr_fit)) {
+  		ssr_fit <- list(ssr_control=create_ssr_control_default(X_names, y_names, time_name, data),
+            X_names=X_names,
+            y_names=y_names,
+            time_name=time_name,
+			vars_and_lags=vars_and_lags,
+            theta_hat=theta,
+            train_data=data)
+  	}
+	
+    ## get indices for prediction data
+    ## in order to predict at time t + prediction_horizon,
+    ##  - data must start at time t - lag_max so that we can get lag_max + 1
+    ##    values in forming the lagged observation vector
+    ##  - we need the number of data points equal to lag_max + 1
+    ## first_predict_ind is the first index in the data data frame
+    ## that needs to be included in the prediction data
+    lag_max <- max(vars_and_lags$lag_value)
+    last_obs_ind <- which(data[[season_var]] == last_obs_season &
+        data[[week_var]] == last_obs_week)
+    first_predict_data_ind <- last_obs_ind - lag_max
+    predict_data_inds <- seq(from=first_predict_data_ind, length=lag_max + 1)
+    
+    ## for training inds, drop anything within +/- 1 year of the last
+    ## observation
+    time_points_per_year <- 52
+    predict_seasons <- data[[season_var]][last_obs_ind + prediction_horizon]
+    additional_training_rows_to_drop <-
+        seq(from=max(1, last_obs_ind - time_points_per_year),
+            to=min(nrow(data), last_obs_ind + time_points_per_year))
+    
+    ## do prediction
+    ssr_predictions <- ssr_predict(
+        ssr_fit=ssr_fit,
+        prediction_data=data[predict_data_inds, ],
+        leading_rows_to_drop=lag_max,
+        additional_training_rows_to_drop=additional_training_rows_to_drop,
+        prediction_horizon=prediction_horizon,
+        normalize_weights=TRUE,
+        prediction_type="centers-and-weights")
+    
+    ## get point estimate or density predictions
+    result <- list()
+    
+    if("centers-and-weights" %in% prediction_types) {
+    	result$pred_centers_and_weights <- ssr_predictions
+    }
+    
+    if("pt" %in% prediction_types) {
+        result$pt_preds <- get_pt_predictions_one_week(ssr_predictions)
+    }
+    
+    if("density" %in% prediction_types) {
+        result$dist_preds <- get_dist_predictions_one_week(ssr_predictions)
+    }
+    
+    return(result)
+}
+
+## a function to get point predictions for one week
+get_pt_predictions_one_week <- function(ssr_predictions) {
+    # get weighted mean
+    pt_est <- weighted.mean(ssr_predictions$centers[, 1],
+        ssr_predictions$weights)
+
+    return(pt_est)
+}
+
+## a function to get kde predictions for one week
+get_dist_predictions_one_week <- function(ssr_predictions, bw) {
+    ## do weighted kde
+    kde_est <- density(ssr_predictions$centers[, 1],
+        weights = ssr_predictions$weights,
+        bw = bw)
+
+    return(data.frame(x = kde_est$x,
+        est_density = kde_est$y))
+}
+
+
+#' Get week and season when we're predicting based on the index of the last obs
+#' and the number of steps forward we're predicting
+#' 
+#' @param last_obs_ind index in the data data frame of the last observation
+#'     before we start predicting
+#' @param prediction_horizon the number of steps forward we're predicting
+#' @param data the data frame, with columns named season_week and season
+#' @param season_var is a string with the name of the variable in the data data
+#'     frame with the season.  I'm sure there is a better way to do this...
+#' @param week_var is a string with the name of the variable in the data data
+#'     frame with the week in the season.  I'm sure there is a better way to do this...
+#' 
+#' @return a list with two components indicating the time of prediction:
+#'     1) week is an integer from 1 to 52 and
+#'     2) season is a string of the form "2008/2009"
+get_prediction_season_week <- function(last_obs_ind, prediction_horizon, data, season_var, week_var) {
+    wk <- (data[[week_var]][last_obs_ind] + prediction_horizon) %% 52
+    if(wk == 0) {
+        wk <- 52
+    }
+    seasons_advanced <- (data[[week_var]][last_obs_ind] + prediction_horizon
+            - wk) / 52
+    start_season_last_obs <- as.integer(substr(
+            as.character(data[[season_var]][last_obs_ind]),
+            start = 1,
+            stop = 4))
+	season <- start_season_last_obs + seasons_advanced
+	
+	if(nchar(as.character(data[[season_var]][last_obs_ind])) > 4) {
+		season <- paste0(season, "/", season + 1)
+	}
+    
+    return(list(week = wk, season = season))
+}
+
+
+
 ### functions to make predictions for the Dengue Forecasting competition
 
 make_competition_forecasts_by_trajectory <- function(
@@ -126,81 +312,81 @@ make_competition_forecasts_by_trajectory <- function(
         ## either the observed counts if we are at or past that week, or
         ## the weights and kernel centers if we are not yet at that week.
         weekly_fits <- lapply(seq_len(52), function(prediction_week) {
-            data_ind <- which(data$season == last_obs_season &
-                    data$season_week == prediction_week)
-            if(prediction_week <= last_obs_week_ind0) {
-                ## get observed value for the given week
-                return(list(observed_value=data[data_ind, "total_cases"]))
-            } else {
-                prediction_horizon <- prediction_week - last_obs_week_ind0
-                prediction_horizon_limit <- 52 - last_obs_week_ind0
-                
-                ## get inds for prediction and training data -- ensure they're the
-                ## same for all weeks in the season so that we can perform prediction
-                ## by trajectory
-                ssr_fit_ind <- which(seq(from=4, to=52, by=4) == prediction_horizon_limit)
-                ssr_fit <- ssr_fits_by_prediction_horizon_limit[[ssr_fit_ind]]
-                
-                ## prediction data are those within max_lag of the last observed week
-                max_lag <- max(unlist(ssr_fit$lags_hat))
-                last_obs_week_ind <- which(data$season == last_obs_season &
-                        data$season_week == last_obs_week)
-                prediction_data_inds <- seq(
-                    from=last_obs_week_ind - max_lag,
-                    to=last_obs_week_ind)
-                
-                if(identical(phase, "train")) {
-                    ## in the training phase, forecasts use all the data not within
-                    ## +/- 1 year of the last observed week as regression examples.
-                    ## drop indices that are within 1 year of the last observed week or
-                    ## within the last (prediction_horizon = 52 - last_obs_week_ind0)
-                    ## weeks of the end of the data
-                    training_data_inds_to_drop <- c(
-                        seq(from=last_obs_week_ind - 52,
-                            to=last_obs_week_ind + 52),
-                        seq(from=nrow(data) - (52 - last_obs_week_ind0),
-                            to=nrow(data)))
-                    training_data_inds_to_drop <- training_data_inds_to_drop[
-                        training_data_inds_to_drop >= 1 &
-                            training_data_inds_to_drop <= nrow(data)
-                        ]
+                data_ind <- which(data$season == last_obs_season &
+                        data$season_week == prediction_week)
+                if(prediction_week <= last_obs_week_ind0) {
+                    ## get observed value for the given week
+                    return(list(observed_value=data[data_ind, "total_cases"]))
                 } else {
-                    ## in the testing phase, we need to update the ssr_fit with
-                    ## additional regression examples that are available in the new
-                    ## data that occur before the last observed week.
-                    ## we compute the data smooths here so that data after the last
-                    ## observed week are not used.
-                    ## note that the fit parameter estimates are not updated.
-                    training_data_inds_to_drop <- c()
+                    prediction_horizon <- prediction_week - last_obs_week_ind0
+                    prediction_horizon_limit <- 52 - last_obs_week_ind0
                     
-                    train_data <- data[seq_len(last_obs_week_ind), , drop=FALSE]
+                    ## get inds for prediction and training data -- ensure they're the
+                    ## same for all weeks in the season so that we can perform prediction
+                    ## by trajectory
+                    ssr_fit_ind <- which(seq(from=4, to=52, by=4) == prediction_horizon_limit)
+                    ssr_fit <- ssr_fits_by_prediction_horizon_limit[[ssr_fit_ind]]
                     
-                    ## add log column
-                    train_data$log_total_cases <- log(train_data$total_cases + 1)
+                    ## prediction data are those within max_lag of the last observed week
+                    max_lag <- max(unlist(ssr_fit$lags_hat))
+                    last_obs_week_ind <- which(data$season == last_obs_season &
+                            data$season_week == last_obs_week)
+                    prediction_data_inds <- seq(
+                        from=last_obs_week_ind - max_lag,
+                        to=last_obs_week_ind)
                     
-                    ## add smooth log column
-                    sm <- loess(log_total_cases ~ as.numeric(week_start_date),
-                        data=train_data,
-                        span=12 / nrow(train_data))
-                    train_data$smooth_log_cases <- sm$fitted
+                    if(identical(phase, "train")) {
+                        ## in the training phase, forecasts use all the data not within
+                        ## +/- 1 year of the last observed week as regression examples.
+                        ## drop indices that are within 1 year of the last observed week or
+                        ## within the last (prediction_horizon = 52 - last_obs_week_ind0)
+                        ## weeks of the end of the data
+                        training_data_inds_to_drop <- c(
+                            seq(from=last_obs_week_ind - 52,
+                                to=last_obs_week_ind + 52),
+                            seq(from=nrow(data) - (52 - last_obs_week_ind0),
+                                to=nrow(data)))
+                        training_data_inds_to_drop <- training_data_inds_to_drop[
+                            training_data_inds_to_drop >= 1 &
+                                training_data_inds_to_drop <= nrow(data)
+                        ]
+                    } else {
+                        ## in the testing phase, we need to update the ssr_fit with
+                        ## additional regression examples that are available in the new
+                        ## data that occur before the last observed week.
+                        ## we compute the data smooths here so that data after the last
+                        ## observed week are not used.
+                        ## note that the fit parameter estimates are not updated.
+                        training_data_inds_to_drop <- c()
+                        
+                        train_data <- data[seq_len(last_obs_week_ind), , drop=FALSE]
+                        
+                        ## add log column
+                        train_data$log_total_cases <- log(train_data$total_cases + 1)
+                        
+                        ## add smooth log column
+                        sm <- loess(log_total_cases ~ as.numeric(week_start_date),
+                            data=train_data,
+                            span=12 / nrow(train_data))
+                        train_data$smooth_log_cases <- sm$fitted
+                        
+                        data$smooth_log_cases <- NA
+                        data$smooth_log_cases[seq_len(last_obs_week_ind)] <- sm$fitted
+                        
+                        ssr_fit$train_data <- train_data
+                    }
                     
-                    data$smooth_log_cases <- NA
-                    data$smooth_log_cases[seq_len(last_obs_week_ind)] <- sm$fitted
-                    
-                    ssr_fit$train_data <- train_data
+                    ## get kernel weights and centers for prediction in the given
+                    ## week
+                    return(ssr_predict(
+                            ssr_fit,
+                            prediction_data=data[prediction_data_inds, , drop=FALSE],
+                            leading_rows_to_drop=max(unlist(ssr_fit$lags_hat)),
+                            additional_training_rows_to_drop=training_data_inds_to_drop,
+                            prediction_horizon=prediction_horizon,
+                            normalize_weights=TRUE))
                 }
-                
-                ## get kernel weights and centers for prediction in the given
-                ## week
-                return(ssr_predict(
-                    ssr_fit,
-                    prediction_data=data[prediction_data_inds, , drop=FALSE],
-                    leading_rows_to_drop=max(unlist(ssr_fit$lags_hat)),
-                    additional_training_rows_to_drop=training_data_inds_to_drop,
-                    prediction_horizon=prediction_horizon,
-                    normalize_weights=TRUE))
-            }
-        })
+            })
         
         ## get predictions
         results_one_season_week <-
@@ -272,7 +458,7 @@ make_competition_forecasts_one_season_week <- function(weekly_fits,
         seq_len(length(peak_incidence_dist_cutoffs) - 1),
         function(lb_ind) {
             mean(max_counts_by_sim_ind >= peak_incidence_dist_cutoffs[lb_ind] &
-                max_counts_by_sim_ind < peak_incidence_dist_cutoffs[lb_ind + 1])
+                    max_counts_by_sim_ind < peak_incidence_dist_cutoffs[lb_ind + 1])
         })
     
     ## extract estimates of peak week
@@ -281,8 +467,8 @@ make_competition_forecasts_one_season_week <- function(weekly_fits,
     peak_week_pt_est <- mean(peak_week_by_sim_ind)
     
     peak_week_dist_est <- sapply(seq_len(52), function(week) {
-        mean(peak_week_by_sim_ind == week)
-    })
+            mean(peak_week_by_sim_ind == week)
+        })
     
     ## extract estimates of season incidence
     season_incidence_by_sim_ind <- apply(simulated_counts_by_week, 1, sum)
@@ -294,7 +480,7 @@ make_competition_forecasts_one_season_week <- function(weekly_fits,
         seq_len(length(season_incidence_dist_cutoffs) - 1),
         function(lb_ind) {
             mean(season_incidence_by_sim_ind >= season_incidence_dist_cutoffs[lb_ind] &
-                season_incidence_by_sim_ind < season_incidence_dist_cutoffs[lb_ind + 1])
+                    season_incidence_by_sim_ind < season_incidence_dist_cutoffs[lb_ind + 1])
         })
     
     ## In theory, our predictive distributions assign non-zero probability to
@@ -315,13 +501,13 @@ make_competition_forecasts_one_season_week <- function(weekly_fits,
     peak_incidence_dist_est <- peak_incidence_dist_est / sum(peak_incidence_dist_est)
     
     return(list(
-        peak_incidence_pt_est=peak_incidence_pt_est,
-        peak_incidence_dist_est=peak_incidence_dist_est,
-        peak_week_pt_est=peak_week_pt_est,
-        peak_week_dist_est=peak_week_dist_est,
-        season_incidence_pt_est=season_incidence_pt_est,
-        season_incidence_dist_est=season_incidence_dist_est
-    ))
+            peak_incidence_pt_est=peak_incidence_pt_est,
+            peak_incidence_dist_est=peak_incidence_dist_est,
+            peak_week_pt_est=peak_week_pt_est,
+            peak_week_dist_est=peak_week_dist_est,
+            season_incidence_pt_est=season_incidence_pt_est,
+            season_incidence_dist_est=season_incidence_dist_est
+        ))
 }
 
 
@@ -361,8 +547,8 @@ make_competition_forecasts_one_season_week_by_trajectory <-
     peak_week_pt_est <- mean(peak_week_by_sim_ind)
     
     peak_week_dist_est <- sapply(seq_len(52), function(week) {
-        mean(peak_week_by_sim_ind == week)
-    })
+            mean(peak_week_by_sim_ind == week)
+        })
     
     ## extract estimates of season incidence
     season_incidence_by_sim_ind <- apply(simulated_counts_by_week, 1, sum)
@@ -399,23 +585,23 @@ make_competition_forecasts_one_season_week_by_trajectory <-
     season_incidence_dist_est <- season_incidence_dist_est / sum(season_incidence_dist_est)
     
     return(list(
-        peak_incidence_pt_est=peak_incidence_pt_est,
-        peak_incidence_dist_est=peak_incidence_dist_est,
-        peak_week_pt_est=peak_week_pt_est,
-        peak_week_dist_est=peak_week_dist_est,
-        season_incidence_pt_est=season_incidence_pt_est,
-        season_incidence_dist_est=season_incidence_dist_est
-    ))
+            peak_incidence_pt_est=peak_incidence_pt_est,
+            peak_incidence_dist_est=peak_incidence_dist_est,
+            peak_week_pt_est=peak_week_pt_est,
+            peak_week_dist_est=peak_week_dist_est,
+            season_incidence_pt_est=season_incidence_pt_est,
+            season_incidence_dist_est=season_incidence_dist_est
+        ))
 }
 
 simulate_counts_by_week <- function(weekly_fits, n_sims) {
     results <- sapply(seq_len(52), function(week) {
-        if(length(weekly_fits[[week]]$observed_value) == 1) {
-            return(rep(weekly_fits[[week]]$observed_value, n_sims))
-        } else {
-            return(simulate_from_weighted_kde(n_sims, weekly_fits[[week]]))
-        }
-    })
+            if(length(weekly_fits[[week]]$observed_value) == 1) {
+                return(rep(weekly_fits[[week]]$observed_value, n_sims))
+            } else {
+                return(simulate_from_weighted_kde(n_sims, weekly_fits[[week]]))
+            }
+        })
     
     return(results)
 }
@@ -432,14 +618,14 @@ simulate_counts_by_week_by_trajectory <- function(weekly_fits, n_sims) {
     
     ## return observed value if available or simulated value
     results <- sapply(seq_len(52), function(week) {
-        if(length(weekly_fits[[week]]$observed_value) == 1) {
-            return(rep(weekly_fits[[week]]$observed_value, n_sims))
-        } else {
-            return(simulate_from_weighted_kde_given_ind(trajectory_index,
-                weekly_fits[[week]]))
-        }
-    })
-
+            if(length(weekly_fits[[week]]$observed_value) == 1) {
+                return(rep(weekly_fits[[week]]$observed_value, n_sims))
+            } else {
+                return(simulate_from_weighted_kde_given_ind(trajectory_index,
+                        weekly_fits[[week]]))
+            }
+        })
+    
     return(results)
 }
 
@@ -469,3 +655,5 @@ simulate_from_weighted_kde <- function(n, weighted_kde_fit) {
     
     return(rnorm(n, component_means, density_fit$bw))
 }
+
+

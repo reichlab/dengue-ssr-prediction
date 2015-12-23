@@ -1,3 +1,13 @@
+## Kernel functions
+## 
+## periodic_kernel
+## get_col_inds_continuous_dicrete_vars_used
+## pdtmvn_kernel
+## compute_pdtmvn_kernel_bw_params_from_bw_eigen
+## vectorize_params_pdtmvn_kernel
+## update_theta_from_vectorized_theta_est_pdtmvn_kernel
+## initialize_params_pdtmvn_kernel
+
 #' Periodic kernel function
 #' 
 #' @param x a vector of values at which to evaluate the kernel function
