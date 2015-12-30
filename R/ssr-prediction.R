@@ -84,14 +84,14 @@ ssr_predict_given_lagged_obs <- function(train_lagged_obs,
     prediction_type="distribution",
     n) {
     
-    kernel_centers_and_weights <-
-        ssr_kernel_centers_and_weights_predict_given_lagged_obs(train_lagged_obs,
-            train_lead_obs,
-            prediction_lagged_obs,
-            ssr_fit,
-            normalize_weights)
-    
     if(identical(prediction_type, "centers-and-weights")) {
+        kernel_centers_and_weights <-
+            ssr_kernel_centers_and_weights_predict_given_lagged_obs(train_lagged_obs,
+                train_lead_obs,
+                prediction_lagged_obs,
+                ssr_fit,
+                normalize_weights)
+        
         return(kernel_centers_and_weights)
     } else if(identical(prediction_type, "distribution")) {
     	return(ssr_dist_predict_given_lagged_lead_obs(train_lagged_obs,
@@ -100,14 +100,28 @@ ssr_predict_given_lagged_obs <- function(train_lagged_obs,
             prediction_test_lead_obs,
             ssr_fit))
     } else if(identical(prediction_type, "point")) {
-    	return(ssr_point_predict_given_kernel_centers_and_weights(
-            kernel_centers_and_weights,
-		    ssr_fit))
+        kernel_centers_and_weights <-
+            ssr_kernel_centers_and_weights_predict_given_lagged_obs(train_lagged_obs,
+                train_lead_obs,
+                prediction_lagged_obs,
+                ssr_fit,
+                normalize_weights)
+        
+        return(ssr_point_predict_given_kernel_centers_and_weights(
+            kernel_centers_and_weights = kernel_centers_and_weights,
+            ssr_fit = ssr_fit))
     } else if(identical(prediction_type, "sample")) {
+        kernel_centers_and_weights <-
+            ssr_kernel_centers_and_weights_predict_given_lagged_obs(train_lagged_obs,
+                train_lead_obs,
+                prediction_lagged_obs,
+                ssr_fit,
+                normalize_weights)
+        
         return(ssr_sample_predict_given_kernel_centers_and_weights(
-            n,
-            kernel_centers_and_weights,
-            ssr_fit))
+            n = n,
+            kernel_centers_and_weights = kernel_centers_and_weights,
+            ssr_fit = ssr_fit))
     } else {
         stop("Invalid prediction type.")
     }
@@ -298,22 +312,19 @@ ssr_sample_predict_given_kernel_centers_and_weights <- function(n,
     ssr_fit) {
     
     result <- matrix(NA, nrow = n, ncol = 1)
-    components <- sample(length(kernel_centers_and_weights$weights),
+    sampled_kernel_inds <- sample(length(kernel_centers_and_weights$weights),
         size = n,
         replace = TRUE,
         prob = kernel_centers_and_weights$weights)
     
-    for(component in unique(components)) {
-        inds <- which(components == component)
-        result[inds, ] <- pdtmvn::rpdtmvn(n = length(inds),
-            x_fixed = kernel_centers_and_weights$conditioning_vars[component],
-            mean = kernel_centers_and_weights$centers[component],
-            sigma = ,
-            lower = ,
-            upper = ,
-            continuous_vars = ,
-            discrete_vars = ,
-            discrete_var_range_functions = )
+    for(kernel_ind in unique(sampled_kernel_inds)) {
+        result_inds <- which(sampled_kernel_inds == kernel_ind)
+        
+        result[result_inds, ] <- simulate_values_from_product_kernel(n = length(result_inds),
+            conditioning_obs = kernel_centers_and_weights$conditioning_vars[kernel_ind],
+            center = kernel_centers_and_weights$centers[kernel_ind],
+            kernel_components = ssr_fit$ssr_control$kernel_components,
+            theta = ssr_fit$theta)
     }
     
     return(result)

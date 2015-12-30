@@ -343,10 +343,10 @@ ssr_crossval_estimate_parameter_loss <- function(theta_est_vector,
             return(sum(crossval_loss_by_prediction_target))
         })
     
-#    browser()
     if(any(is.na(crossval_loss_by_time_ind))) {
         ## parameters resulted in numerical instability
-        ## return largest non-infinite value
+        stop("NAs in cross validated estimate of loss")
+        ## old solution was to return largest non-infinite value
         return(.Machine$double.xmax)
     } else {
         return(sum(crossval_loss_by_time_ind))
