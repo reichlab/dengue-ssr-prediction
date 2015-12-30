@@ -26,8 +26,8 @@ ssr_predict <- function(ssr_fit,
         leading_rows_to_drop=max(ssr_fit$vars_and_lags$lag_value),
         additional_training_rows_to_drop=NULL,
         prediction_horizon,
-        normalize_weights=TRUE,
-        prediction_type="distribution") {
+        prediction_type="distribution",
+        n) {
     ## get training and prediction examples
     training_examples <- assemble_training_examples(ssr_fit$train_data,
         ssr_fit$vars_and_lags,
@@ -51,8 +51,8 @@ ssr_predict <- function(ssr_fit,
         prediction_examples$lagged_obs,
         prediction_examples$lead_obs,
         ssr_fit,
-        normalize_weights,
-        prediction_type)
+        prediction_type,
+        n)
 }
 
 #' Make predictions from an estimated ssr model forward prediction_horizon time
@@ -71,7 +71,6 @@ ssr_predict <- function(ssr_fit,
 #'     only one row, representing one time point.  Each column is a (lagged)
 #'     variable.
 #' @param ssr_fit is an object representing a fitted ssr model
-#' @param normalize_weights boolean, should the weights be normalized?
 #' @param prediction_type character; either "distribution" or "point",
 #'     indicating the type of prediction to perform.
 #' 
@@ -82,26 +81,35 @@ ssr_predict_given_lagged_obs <- function(train_lagged_obs,
     prediction_lagged_obs,
     prediction_test_lead_obs,
     ssr_fit,
-    normalize_weights=TRUE,
-    prediction_type="distribution") {
-    if(identical(prediction_type, "distribution")) {
+    prediction_type="distribution",
+    n) {
+    
+    kernel_centers_and_weights <-
+        ssr_kernel_centers_and_weights_predict_given_lagged_obs(train_lagged_obs,
+            train_lead_obs,
+            prediction_lagged_obs,
+            ssr_fit,
+            normalize_weights)
+    
+    if(identical(prediction_type, "centers-and-weights")) {
+        return(kernel_centers_and_weights)
+    } else if(identical(prediction_type, "distribution")) {
     	return(ssr_dist_predict_given_lagged_lead_obs(train_lagged_obs,
-		    train_lead_obs,
-		    prediction_lagged_obs,
-		    prediction_test_lead_obs,
-		    ssr_fit))
+            train_lead_obs,
+            prediction_lagged_obs,
+            prediction_test_lead_obs,
+            ssr_fit))
     } else if(identical(prediction_type, "point")) {
-    	return(ssr_point_predict_given_lagged_obs(train_lagged_obs,
-		    train_lead_obs,
-		    prediction_lagged_obs,
-		    ssr_fit,
-		    normalize_weights))
-    } else if(identical(prediction_type, "centers-and-weights")) {
-    	return(ssr_kernel_centers_and_weights_predict_given_lagged_obs(train_lagged_obs,
-		    train_lead_obs,
-		    prediction_lagged_obs,
-		    ssr_fit,
-		    normalize_weights))
+    	return(ssr_point_predict_given_kernel_centers_and_weights(
+            kernel_centers_and_weights,
+		    ssr_fit))
+    } else if(identical(prediction_type, "sample")) {
+        return(ssr_sample_predict_given_kernel_centers_and_weights(
+            n,
+            kernel_centers_and_weights,
+            ssr_fit))
+    } else {
+        stop("Invalid prediction type.")
     }
 }
 
@@ -126,7 +134,7 @@ ssr_predict_given_lagged_obs <- function(train_lagged_obs,
 #' @param ssr_fit is an object representing a fitted ssr model
 #' @param normalize_weights boolean, should the weights be normalized?
 #' 
-#' @return a list with three components:
+#' @return a named list with four components:
 #'     log_weights: a vector of length = length(train_lagged_obs) with
 #'         the log of weights assigned to each observation (up to a constant of
 #'         proportionality if normalize_weights is FALSE)
@@ -134,84 +142,30 @@ ssr_predict_given_lagged_obs <- function(train_lagged_obs,
 #'         the weights assigned to each observation (up to a constant of
 #'         proportionality if normalize_weights is FALSE)
 #'     centers: a copy of the train_lead_obs argument -- kernel centers
+#'     pred_bws: a named vector of bandwidths, one per column of centers
 ssr_kernel_centers_and_weights_predict_given_lagged_obs <- function(train_lagged_obs,
     train_lead_obs,
     prediction_lagged_obs,
-    ssr_fit,
-    normalize_weights=TRUE) {
+    ssr_fit) {
     
     ## compute log of kernel function values representing similarity
     ## of lagged observation vectors from train_data and predict_data.
     ## result is a vector of length nrow(train_lagged_obs)
-    log_weights <- compute_kernel_values(train_lagged_obs,
+    unnormalized_log_weights <- compute_kernel_values(train_lagged_obs,
         prediction_lagged_obs,
-        ssr_fit$theta_hat,
-        ssr_fit$ssr_control,
+        kernel_components = ssr_fit$ssr_control$kernel_components,
+        theta = ssr_fit$theta_hat,
         log = TRUE)
-
-    ## if requested, normalize log weights
-    if(normalize_weights) {
-        log_weights <- compute_normalized_log_weights(log_weights)
-    }
     
-    return(list(log_weights=log_weights,
+    log_weights <- compute_normalized_log_weights(unnormalized_log_weights)
+    
+    return(list(unnormalized_log_weights=unnormalized_log_weights,
+        log_weights=log_weights,
         weights=exp(log_weights),
+        conditioning_vars=train_lagged_obs,
         centers=train_lead_obs))
 }
 
-#' Make predictions from an estimated ssr model forward prediction_horizon time
-#' steps from the end of predict_data, based on the kernel functions and
-#' bandwidths specified in the ssr_fit object.  This function requires that the
-#' lagged and lead observation vectors have already been computed.
-#' 
-#' @param train_lagged_obs is a matrix (with column names) containing the
-#'     lagged observation vector computed from the training data.  Each row
-#'     corresponds to a time point.  Each column is a (lagged) variable.
-#' @param train_lead_obs is a vector with length = nrow(train_lagged_obs) with
-#'     the value of the prediction target variable corresponding to each row in
-#'     the train_lagged_obs matrix.
-#' @param prediction_lagged_obs is a matrix (with column names) containing the
-#'     lagged observation vector computed from the prediction data.  There is
-#'     only one row, representing one time point.  Each column is a (lagged)
-#'     variable.
-#' @param prediction_test_lead_obs is a matrix (with column names) containing
-#'     prediction target vectors computed from the prediction data.  Each row
-#'     represents one time point.  Each column is a (leading) target variable.
-#' @param ssr_fit is an object representing a fitted ssr model
-#' @param normalize_weights boolean, should the weights be normalized?
-#' 
-#' @return a list with three components:
-#'     log_weights: a vector of length = length(train_lagged_obs) with
-#'         the log of weights assigned to each observation (up to a constant of
-#'         proportionality if normalize_weights is FALSE)
-#'     weights: a vector of length = length(train_lagged_obs) with
-#'         the weights assigned to each observation (up to a constant of
-#'         proportionality if normalize_weights is FALSE)
-#'     centers: a copy of the train_lead_obs argument -- kernel centers
-ssr_point_predict_given_lagged_obs <- function(train_lagged_obs,
-    train_lead_obs,
-    prediction_lagged_obs,
-    ssr_fit,
-    normalize_weights=TRUE) {
-    
-    ## compute log of kernel function values representing similarity
-    ## of lagged observation vectors from train_data and predict_data.
-    ## result is a vector of length nrow(train_lagged_obs)
-    log_weights <- compute_kernel_values(train_lagged_obs,
-        prediction_lagged_obs,
-        ssr_fit$theta_hat,
-        ssr_fit$ssr_control,
-        log = TRUE)
-
-    ## if requested, normalize log weights
-    if(normalize_weights) {
-        log_weights <- compute_normalized_log_weights(log_weights)
-    }
-    
-    return(list(log_weights=log_weights,
-        weights=exp(log_weights),
-        centers=train_lead_obs))
-}
 
 #' Make predictions from an estimated ssr model forward prediction_horizon time
 #' steps from the end of predict_data, based on the kernel functions and
@@ -251,8 +205,8 @@ ssr_dist_predict_given_lagged_lead_obs <- function(train_lagged_obs,
     ## result is a vector of length nrow(train_lagged_obs)
     log_kernel_values_x <- compute_kernel_values(train_lagged_obs,
         prediction_lagged_obs,
-        ssr_fit$theta_hat,
-        ssr_fit$ssr_control,
+        kernel_components = ssr_fit$ssr_control$kernel_components,
+        theta = ssr_fit$theta_hat,
         log = TRUE)
     
     ## compute log(sum(kernel values x))
@@ -264,14 +218,103 @@ ssr_dist_predict_given_lagged_lead_obs <- function(train_lagged_obs,
                 cbind(train_lagged_obs, train_lead_obs),
                 cbind(prediction_lagged_obs,
                     prediction_test_lead_obs),
-		        ssr_fit$theta_hat,
-		        ssr_fit$ssr_control,
-		        log = TRUE
+                kernel_components = ssr_fit$ssr_control$kernel_components,
+                theta = ssr_fit$theta_hat,
+                log = TRUE
             )
             
             return(logspace_sum(log_kernel_values_xy) -
-                log_sum_kernel_values_x)
+                    log_sum_kernel_values_x)
         })
     
     return(log_result)
+}
+
+#' Make predictions from an estimated ssr model forward prediction_horizon time
+#' steps from the end of predict_data, based on the kernel functions and
+#' bandwidths specified in the ssr_fit object.  This function requires that the
+#' lagged and lead observation vectors have already been computed.
+#' 
+#' @param train_lagged_obs is a matrix (with column names) containing the
+#'     lagged observation vector computed from the training data.  Each row
+#'     corresponds to a time point.  Each column is a (lagged) variable.
+#' @param train_lead_obs is a vector with length = nrow(train_lagged_obs) with
+#'     the value of the prediction target variable corresponding to each row in
+#'     the train_lagged_obs matrix.
+#' @param prediction_lagged_obs is a matrix (with column names) containing the
+#'     lagged observation vector computed from the prediction data.  There is
+#'     only one row, representing one time point.  Each column is a (lagged)
+#'     variable.
+#' @param prediction_test_lead_obs is a matrix (with column names) containing
+#'     prediction target vectors computed from the prediction data.  Each row
+#'     represents one time point.  Each column is a (leading) target variable.
+#' @param ssr_fit is an object representing a fitted ssr model
+#' @param normalize_weights boolean, should the weights be normalized?
+#' 
+#' @return a list with three components:
+#'     log_weights: a vector of length = length(train_lagged_obs) with
+#'         the log of weights assigned to each observation (up to a constant of
+#'         proportionality if normalize_weights is FALSE)
+#'     weights: a vector of length = length(train_lagged_obs) with
+#'         the weights assigned to each observation (up to a constant of
+#'         proportionality if normalize_weights is FALSE)
+#'     centers: a copy of the train_lead_obs argument -- kernel centers
+ssr_point_predict_given_kernel_centers_and_weights <- function(kernel_centers_and_weights,
+    ssr_fit) {
+    stop("point predictions for ssr are not yet implemented")
+}
+
+#' Draw a sample from the predictive distribution corresponding to an estimated
+#' ssr model forward prediction_horizon time steps from the end of predict_data.
+#' This function requires that the kernel weights and centers have already been
+#' computed.
+#' 
+#' @param train_lagged_obs is a matrix (with column names) containing the
+#'     lagged observation vector computed from the training data.  Each row
+#'     corresponds to a time point.  Each column is a (lagged) variable.
+#' @param train_lead_obs is a vector with length = nrow(train_lagged_obs) with
+#'     the value of the prediction target variable corresponding to each row in
+#'     the train_lagged_obs matrix.
+#' @param prediction_lagged_obs is a matrix (with column names) containing the
+#'     lagged observation vector computed from the prediction data.  There is
+#'     only one row, representing one time point.  Each column is a (lagged)
+#'     variable.
+#' @param prediction_test_lead_obs is a matrix (with column names) containing
+#'     prediction target vectors computed from the prediction data.  Each row
+#'     represents one time point.  Each column is a (leading) target variable.
+#' @param ssr_fit is an object representing a fitted ssr model
+#' @param normalize_weights boolean, should the weights be normalized?
+#' 
+#' @return a list with three components:
+#'     log_weights: a vector of length = length(train_lagged_obs) with
+#'         the log of weights assigned to each observation (up to a constant of
+#'         proportionality if normalize_weights is FALSE)
+#'     weights: a vector of length = length(train_lagged_obs) with
+#'         the weights assigned to each observation (up to a constant of
+#'         proportionality if normalize_weights is FALSE)
+#'     centers: a copy of the train_lead_obs argument -- kernel centers
+ssr_sample_predict_given_kernel_centers_and_weights <- function(n,
+    kernel_centers_and_weights,
+    ssr_fit) {
+    
+    result <- matrix(NA, nrow = n, ncol = 1)
+    components <- sample(length(kernel_centers_and_weights$weights),
+        size = n,
+        replace = TRUE,
+        prob = kernel_centers_and_weights$weights)
+    
+    for(component in unique(components)) {
+        inds <- which(components == component)
+        result[inds, ] <- pdtmvn::rpdtmvn(n = length(inds),
+            x_fixed = kernel_centers_and_weights$conditioning_vars[component],
+            mean = kernel_centers_and_weights$centers[component],
+            sigma = ,
+            lower = ,
+            upper = ,
+            continuous_vars = ,
+            discrete_vars = ,
+            discrete_var_range_functions = )
+    }
+    
+    return(result)
 }

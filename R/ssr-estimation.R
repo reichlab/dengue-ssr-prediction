@@ -319,10 +319,10 @@ ssr_crossval_estimate_parameter_loss <- function(theta_est_vector,
             crossval_loss_by_prediction_target <- sapply(
                 seq_len(ncol(cross_validation_examples$lead_obs)),
                 function(prediction_target_ind) {
-                    ## calculate and return value of loss function based on prediction
-                    ## and realized value
-                    loss_fn_args <- ssr_control$loss_fn_args
-                    loss_fn_args$prediction_result <- ssr_predict_given_lagged_obs(
+                    ## calculate and return value of loss function based on
+                    ## prediction and realized value
+                    loss_args <- ssr_control$loss_fn_args
+                    loss_args$prediction_result <- ssr_predict_given_lagged_obs(
 		                train_lagged_obs=train_lagged_obs,
 		                train_lead_obs=train_lead_obs,
 		                prediction_lagged_obs=prediction_lagged_obs,
@@ -332,12 +332,12 @@ ssr_crossval_estimate_parameter_loss <- function(theta_est_vector,
 		                ),
 		                prediction_type=ssr_control$loss_fn_prediction_type)
                     
-                    loss_fn_args$obs <- as.numeric(
+                    loss_args$obs <- as.numeric(
                         cross_validation_examples$lead_obs[
                             t_pred, prediction_target_ind]
                     )
                     
-                    return(do.call(ssr_control$loss_fn_name, loss_fn_args))
+                    return(do.call(ssr_control$loss_fn, loss_args))
                 })
             
             return(sum(crossval_loss_by_prediction_target))

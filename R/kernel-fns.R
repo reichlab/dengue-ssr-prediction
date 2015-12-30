@@ -74,7 +74,7 @@ get_col_inds_continuous_discrete_vars_used <- function(x_colnames,
 #' @param discrete_vars character vector with names of variables that are to be
 #'     treated as discrete.  May contain entries that do not appear in
 #'     colnames(x)
-#' @param discrete_var_range_functions a list with one entry for each element
+#' @param discrete_var_range_fns a list with one entry for each element
 #'     of discrete_vars.  Each entry is a named list of length 2; the element
 #'     named "a" is a character string with the name of a function that returns
 #'     a(x) for any real x, and the element named "b" is a character string with
@@ -115,10 +115,77 @@ pdtmvn_kernel <- function(x,
 		upper = upper,
 		continuous_vars = continuous_var_col_inds,
 		discrete_vars = discrete_var_col_inds,
-		discrete_var_range_functions = discrete_var_range_fns[discrete_vars],
+		discrete_var_range_fns = discrete_var_range_fns[discrete_vars],
 		log = log,
-		validate_level = 1))
+		validate_level = 1L))
 }
+
+#' Simulate from the kernel function given by the pdtmvn distribution.
+#' 
+#' @param n number of simulations to generate
+#' @param a matrix of values at which to evaluate the kernel function, with
+#'     column names specified.  Each row is an observation, each column is an
+#'     observed variable.
+#' @param center a real vector, center point for the kernel function
+#' @param bw bandwidth matrix
+#' @param bw_continuous the portion of bw corresponding to continuous variables
+#' @param conditional_bw_discrete the Schur complement of the portion of bw
+#'     corresponding to discrete variables
+#' @param conditional_center_discrete_offset_multiplier Sigma_dc Sigma_c^{-1}.
+#'     This is used in computing the mean of the underlying multivariate normal
+#'     distribution for the discrete variables conditioning on the continuous
+#'     variables.
+#' @param continuous_vars character vector with names of variables that are to
+#'     be treated as continuous.  May contain entries that do not appear in
+#'     colnames(x).
+#' @param discrete_vars character vector with names of variables that are to be
+#'     treated as discrete.  May contain entries that do not appear in
+#'     colnames(x)
+#' @param discrete_var_range_fns a list with one entry for each element
+#'     of discrete_vars.  Each entry is a named list of length 2; the element
+#'     named "a" is a character string with the name of a function that returns
+#'     a(x) for any real x, and the element named "b" is a character string with
+#'     the name of a function that returns b(x) for any real x.
+#' @param lower Vector of lower truncation points
+#' @param upper Vector of upper truncation points
+#' @param log logical; if TRUE, return the log of the kernel function value
+#' @param ... mop up extra arguments
+#' 
+#' @return the value of the kernel function given by the pdtmvn distribution
+#'     at x.
+rpdtmvn_kernel <- function(n,
+    conditioning_obs,
+    center,
+    bw,
+    bw_continuous,
+    conditional_bw_discrete,
+    conditional_center_discrete_offset_multiplier,
+    continuous_vars,
+    discrete_vars,
+    continuous_var_col_inds,
+    discrete_var_col_inds,
+    discrete_var_range_fns,
+    lower,
+    upper,
+    log,
+    ...) {
+    if(length(dim(center)) > 0) {
+        center_names <- colnames(center)
+        center <- as.vector(as.matrix(center))
+        names(center) <- center_names
+    }
+    return(pdtmvn::rpdtmvn(n = n,
+            x_fixed = conditioning_obs,
+            mean = center,
+            sigma = bw,
+            lower = lower,
+            upper = upper,
+            continuous_vars = continuous_var_col_inds,
+            discrete_vars = discrete_var_col_inds,
+            discrete_var_range_fns = discrete_var_range_fns,
+            validate_level = 1))
+}
+
 
 #' Compute the parameters bw, bw_continuous, conditional_bw_discrete, and
 #' conditional_center_discrete_offset_multiplier for the pdtmvn_kernel function

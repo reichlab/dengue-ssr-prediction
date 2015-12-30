@@ -4,7 +4,7 @@
 ## extract_vectorized_theta_est_from_theta
 ## update_theta_from_vectorized_theta_est
 ## compute_kernel_values
-
+## simulate_values_from_product_kernel
 
 #' Initialize parameter values.
 #'
@@ -141,8 +141,8 @@ update_theta_from_vectorized_theta_est <- function(theta_est_vector,
 #' @param log boolean; if TRUE (default), return kernel values on the log scale
 compute_kernel_values <- function(train_obs,
     prediction_obs,
+    kernel_components,
     theta,
-    ssr_control,
     log = TRUE) {
 	if(!(identical(nrow(prediction_obs), 1L))) {
 		stop("In call to compute_kernel_values, prediction_obs must have exactly 1 row.")
@@ -153,25 +153,25 @@ compute_kernel_values <- function(train_obs,
 	## the kernel function
     log_kernel_component_values <- matrix(0,
         nrow=nrow(train_obs),
-        ncol=length(ssr_control$kernel_components))
+        ncol=length(kernel_components))
     
-    for(ind in seq_along(ssr_control$kernel_components)) {
+    for(ind in seq_along(kernel_components)) {
 		combined_names_in_component <-
-			ssr_control$kernel_components[[ind]]$vars_and_lags$combined_name
+			kernel_components[[ind]]$vars_and_lags$combined_name
         col_names <- colnames(train_obs)[
             colnames(train_obs) %in% combined_names_in_component]
         
         if(length(col_names) > 0) {
 	        ## assemble arguments to kernel function
 	        kernel_fn_args <- c(theta[[ind]],
-	            ssr_control$kernel_components[[ind]]$theta_fixed)
+	            kernel_components[[ind]]$theta_fixed)
 	        kernel_fn_args$x <- train_obs[, col_names, drop = FALSE]
 	        kernel_fn_args$center <- prediction_obs[, col_names, drop = FALSE]
 	        kernel_fn_args$log <- TRUE
 	        
 	        ## call kernel function and store results
 	        log_kernel_component_values[, ind] <-
-	            do.call(ssr_control$kernel_components[[ind]]$kernel_fn,
+	            do.call(kernel_components[[ind]]$kernel_fn,
 					kernel_fn_args)
 	    }
     }
@@ -184,4 +184,66 @@ compute_kernel_values <- function(train_obs,
     } else {
         return(exp(apply(log_kernel_component_values, 1, sum)))
     }
+}
+
+
+
+#' Simulate values from (conditional) kernel.
+#' 
+#' @param train_obs a data frame with lagged observation vectors computed
+#'     from the training data
+#' @param prediction_obs a data frame with the lagged observation vector
+#'     computed from the prediction data.  It is assumed that
+#'     prediction_lagged_obs contains only one row.
+#' @param theta a list with one component for each component of the kernel
+#'     function.  This component is a named list with arguments to the
+#'     corresponding kernel function.
+#' @param ssr_control a list of ssr_control parameters for ssr
+#' @param log boolean; if TRUE (default), return kernel values on the log scale
+simulate_values_from_product_kernel <- function(n,
+    conditioning_obs,
+    center,
+    kernel_components,
+    theta) {
+    if(!(identical(nrow(conditioning_obs), 1L)) || !(identical(nrow(center), 1L))) {
+        stop("In call to simulate_values_from_product_kernel, conditioning_obs and center must have exactly 1 row.")
+    }
+    
+    ## create a matrix to contain simulated values
+    ## rows correspond to simulations, columns to variables simulated
+    simulated_values <- matrix(NA,
+        nrow = n,
+        ncol = ncol(center))
+    colnames(simulated_values) <- colnames(center)
+    
+    for(ind in seq_along(kernel_components)) {
+        combined_names_in_component <-
+            kernel_components[[ind]]$vars_and_lags$combined_name
+        conditioning_col_names <- colnames(conditioning_obs)[
+            colnames(conditioning_obs) %in% combined_names_in_component]
+        center_col_names <- colnames(center)[
+            colnames(center) %in% combined_names_in_component]
+        
+        if(length(conditioning_col_names) > 0) {
+            simulated_values[, conditioning_col_names] <-
+                rep(conditioning_obs[, conditioning_col_names], each = n)
+        }
+        
+        if(length(center_col_names) > 0) {
+            ## assemble arguments to kernel function
+            rkernel_args <- c(theta[[ind]],
+                kernel_components[[ind]]$theta_fixed)
+            rkernel_args$n <- n
+            rkernel_args$conditioning_obs <-
+                conditioning_obs[, conditioning_col_names, drop = FALSE]
+            rkernel_args$center <- center[, center_col_names, drop = FALSE]
+            
+            ## call kernel function and store results
+            simulated_values[, center_col_names] <-
+                do.call(kernel_components[[ind]]$rkernel_fn,
+                    rkernel_args)
+        }
+    }
+    
+    return(simulated_values)
 }
